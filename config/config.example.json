@@ -1,0 +1,11 @@
+{
+  "accounts_file": "accounts.txt",
+  "download_folder": "downloads",
+  "database_path": "database/app.db",
+  "tesseract_path": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
+  "polling_interval_minutes": 30,
+  "theme": "dark",
+  "log_level": "INFO",
+  "instagram_username": "",
+  "instagram_password": ""
+}

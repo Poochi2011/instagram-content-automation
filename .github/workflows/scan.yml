@@ -1,0 +1,51 @@
+name: Instagram scan
+
+on:
+  schedule:
+    - cron: "0 * * * *" # hourly — edit this to change polling frequency
+  workflow_dispatch: {} # adds a "Run workflow" button in the Actions tab
+
+permissions:
+  contents: write # needed to commit the updated database/downloads back to the repo
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Tesseract OCR
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore Instagram session cache
+        uses: actions/cache@v4
+        with:
+          path: config/sessions
+          key: instagram-session-${{ github.repository }}
+
+      - name: Run check (scrape new posts)
+        env:
+          INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}
+          INSTAGRAM_PASSWORD: ${{ secrets.INSTAGRAM_PASSWORD }}
+          TESSERACT_PATH: /usr/bin/tesseract
+        run: python main.py --check
+
+      - name: Run prepare (OCR + caption prep)
+        env:
+          TESSERACT_PATH: /usr/bin/tesseract
+        run: python main.py --prepare
+
+      - name: Commit updated database and downloads
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add database/app.db downloads/
+          git diff --staged --quiet || git commit -m "Automated scan: $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
