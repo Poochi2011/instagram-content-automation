@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 import instaloader
+from PIL import Image
 
 from utils.exceptions import DownloadError, LoginRequiredError, RateLimitError, ScraperError
 from utils.logger import get_logger
@@ -60,6 +61,12 @@ class InstagramClient:
             request_timeout=20.0,
             max_connection_attempts=1,
             sleep=False,
+            # The "iPhone" CDN variant (only fetched when logged in) is inconsistently
+            # encoded — progressive JPEG or even WebP-with-a-.jpg-name — and Instagram's
+            # Graph API content-publishing endpoint rejects both. download_image() also
+            # re-encodes defensively, but avoiding this variant in the first place means
+            # fewer requests per post too.
+            iphone_support=False,
         )
         self._username = username
         self._password = password
@@ -142,10 +149,23 @@ class InstagramClient:
         return [MediaItem(url=post.url, is_video=post.is_video)]
 
     def download_image(self, image_url: str, shortcode: str, destination_path) -> None:
-        """Download a single image slide to an exact file path using the loader's HTTP session."""
+        """Download a single image slide to an exact file path using the loader's HTTP session.
+
+        Instagram's CDN serves images in whatever format/encoding it feels like
+        (progressive JPEG, WebP saved with a .jpg name, etc.) — Graph API's content
+        publishing endpoint rejects some of these with an opaque "media type" error.
+        Re-encoding through Pillow to a clean baseline JPEG guarantees a format Graph
+        API accepts, regardless of what Instagram actually served.
+        """
         try:
             self._loader.context.get_and_write_raw(image_url, str(destination_path))
         except instaloader.exceptions.InstaloaderException as exc:
             raise DownloadError(f"Failed to download image for {shortcode}: {exc}") from exc
         except OSError as exc:
             raise DownloadError(f"Failed to write image file for {shortcode}: {exc}") from exc
+
+        try:
+            with Image.open(destination_path) as img:
+                img.convert("RGB").save(destination_path, "JPEG", quality=92)
+        except OSError as exc:
+            raise DownloadError(f"Failed to re-encode image for {shortcode}: {exc}") from exc
