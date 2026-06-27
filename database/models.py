@@ -42,9 +42,15 @@ class Post:
     image_path: Optional[str]
     ocr_text: Optional[str]
     repost_caption: Optional[str]
+    is_carousel: bool
     status: str
     downloaded_at: Optional[str]
     processed_at: Optional[str]
+    publish_attempts: int
+    last_publish_error: Optional[str]
+    next_publish_attempt_at: Optional[str]
+    published_at: Optional[str]
+    ig_media_id: Optional[str]
     created_at: str
 
     @classmethod
@@ -59,10 +65,35 @@ class Post:
             image_path=row["image_path"],
             ocr_text=row["ocr_text"],
             repost_caption=row["repost_caption"],
+            is_carousel=bool(row["is_carousel"]),
             status=row["status"],
             downloaded_at=row["downloaded_at"],
             processed_at=row["processed_at"],
+            publish_attempts=row["publish_attempts"],
+            last_publish_error=row["last_publish_error"],
+            next_publish_attempt_at=row["next_publish_attempt_at"],
+            published_at=row["published_at"],
+            ig_media_id=row["ig_media_id"],
             created_at=row["created_at"],
+        )
+
+
+@dataclass
+class PostMedia:
+    id: Optional[int]
+    post_id: int
+    position: int
+    image_path: str
+    is_video: bool
+
+    @classmethod
+    def from_row(cls, row) -> "PostMedia":
+        return cls(
+            id=row["id"],
+            post_id=row["post_id"],
+            position=row["position"],
+            image_path=row["image_path"],
+            is_video=bool(row["is_video"]),
         )
 
 

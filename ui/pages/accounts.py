@@ -19,6 +19,11 @@ class AccountsPage(QWidget):
         layout.addWidget(self._build_header())
         layout.addWidget(self._build_add_row())
 
+        self.empty_hint = QLabel("No accounts yet — add an Instagram username above to start monitoring it.")
+        self.empty_hint.setObjectName("pageSubtitle")
+        self.empty_hint.setVisible(False)
+        layout.addWidget(self.empty_hint)
+
         self.table = SearchableTable(
             ["Username", "Status", "Last Checked", "Last Post"], "Search accounts..."
         )
@@ -58,6 +63,7 @@ class AccountsPage(QWidget):
         h.setSpacing(8)
         self.username_input = QLineEdit()
         self.username_input.setPlaceholderText("Instagram username (without @)")
+        self.username_input.returnPressed.connect(self._add_account)
         add_btn = QPushButton("Add Account")
         add_btn.setObjectName("primaryButton")
         add_btn.clicked.connect(self._add_account)
@@ -77,6 +83,8 @@ class AccountsPage(QWidget):
             for a in accounts
         ]
         self.table.set_rows(rows)
+        self.empty_hint.setVisible(len(accounts) == 0)
+        self.table.setVisible(len(accounts) > 0)
 
     def _add_account(self) -> None:
         username = self.username_input.text().strip().lstrip("@")

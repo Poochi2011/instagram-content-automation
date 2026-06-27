@@ -42,10 +42,27 @@ jobs:
           TESSERACT_PATH: /usr/bin/tesseract
         run: python main.py --prepare
 
-      - name: Commit updated database and downloads
+      - name: Commit and push newly downloaded media
+        # Must happen before --publish: the Graph API fetches images from
+        # MEDIA_PUBLIC_BASE_URL itself, so a raw.githubusercontent.com URL only
+        # works once the file has actually been pushed. (Requires this repo to
+        # be public, or MEDIA_PUBLIC_BASE_URL to point at a different public host.)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add database/app.db downloads/
           git diff --staged --quiet || git commit -m "Automated scan: $(date -u +'%Y-%m-%d %H:%M UTC')"
           git push
+
+      - name: Run publish (post due items to the destination account)
+        env:
+          IG_DEST_ACCESS_TOKEN: ${{ secrets.IG_DEST_ACCESS_TOKEN }}
+          IG_DEST_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_DEST_BUSINESS_ACCOUNT_ID }}
+          MEDIA_PUBLIC_BASE_URL: ${{ secrets.MEDIA_PUBLIC_BASE_URL }}
+        run: python main.py --publish
+
+      - name: Commit updated publish status
+        run: |
+          git add database/app.db
+          git diff --staged --quiet || git commit -m "Automated publish: $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git pull --rebase && git push

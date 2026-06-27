@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 # Env vars override config.json — lets CI (GitHub Actions secrets) inject credentials
@@ -13,6 +13,9 @@ _ENV_OVERRIDES = {
     "instagram_username": "INSTAGRAM_USERNAME",
     "instagram_password": "INSTAGRAM_PASSWORD",
     "tesseract_path": "TESSERACT_PATH",
+    "ig_dest_access_token": "IG_DEST_ACCESS_TOKEN",
+    "ig_dest_business_account_id": "IG_DEST_BUSINESS_ACCOUNT_ID",
+    "media_public_base_url": "MEDIA_PUBLIC_BASE_URL",
 }
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -33,6 +36,17 @@ class Settings:
     log_level: str = "INFO"
     instagram_username: str = ""
     instagram_password: str = ""
+
+    # Destination-account auto-publish (Instagram Graph API).
+    ig_dest_access_token: str = ""
+    ig_dest_business_account_id: str = ""
+    # Repo root, not the downloads folder — the relative path (e.g. downloads/x.jpg)
+    # is computed from PROJECT_ROOT and appended, so this should NOT end in /downloads.
+    media_public_base_url: str = ""  # e.g. https://raw.githubusercontent.com/<user>/<repo>/main
+    max_publish_per_cycle: int = 1
+    max_publish_per_day: int = 10
+    publish_retry_max_attempts: int = 5
+    publish_retry_backoff_minutes: int = 15
 
     @property
     def accounts_file_path(self) -> Path:

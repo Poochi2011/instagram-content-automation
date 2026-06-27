@@ -52,11 +52,10 @@ def prepare_pending_posts(
 ) -> int:
     """Run prepare_post() on every post still in 'downloaded' status. Returns count prepared."""
     pending = post_repo.list_by_status("downloaded")
+    accounts_by_id = {a.id: a for a in account_repo.list_all()}
     prepared = 0
     for post in pending:
-        account = next(
-            (a for a in account_repo.list_all() if a.id == post.account_id), None
-        )
+        account = accounts_by_id.get(post.account_id)
         if account is None:
             continue
         if prepare_post(post, account.username, tesseract_path, post_repo, error_repo):

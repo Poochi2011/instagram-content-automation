@@ -29,6 +29,7 @@ class Database:
                 self._connection = sqlite3.connect(self.db_path, check_same_thread=False)
                 self._connection.row_factory = sqlite3.Row
                 self._connection.execute("PRAGMA foreign_keys = ON")
+                self._connection.execute("PRAGMA busy_timeout = 5000")
             except sqlite3.Error as exc:
                 raise DatabaseError(f"Failed to connect to database at {self.db_path}: {exc}") from exc
         return self._connection

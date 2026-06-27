@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
 NAV_ITEMS = [
-    ("dashboard", "Dashboard"),
-    ("accounts", "Accounts"),
-    ("queue", "Queue"),
-    ("logs", "Logs"),
-    ("settings", "Settings"),
+    ("dashboard", "📊  Dashboard"),
+    ("accounts", "👤  Accounts"),
+    ("queue", "📥  Queue"),
+    ("logs", "📜  Logs"),
+    ("settings", "⚙️  Settings"),
 ]
 
 
@@ -29,6 +29,11 @@ class Sidebar(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 20, 12, 20)
         layout.setSpacing(4)
+
+        brand = QLabel("IG AUTOMATION")
+        brand.setObjectName("cardTitle")
+        brand.setContentsMargins(8, 0, 0, 16)
+        layout.addWidget(brand)
 
         for key, label in NAV_ITEMS:
             btn = QPushButton(label)

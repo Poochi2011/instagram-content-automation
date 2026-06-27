@@ -3,9 +3,10 @@
 Usage:
     python main.py --check     Run one monitoring pass (scrape + download new posts)
     python main.py --prepare   Run OCR + caption generation on downloaded posts
+    python main.py --publish   Publish due 'ready' posts to the destination IG account
     python main.py --status    Print a dashboard-style summary
     python main.py --gui       Launch the desktop GUI
-    python main.py --daemon    Run --check + --prepare forever on the configured interval
+    python main.py --daemon    Run --check + --prepare + --publish forever on the configured interval
 
 --check/--prepare/--status print a single JSON object to stdout so n8n (or any
 caller) can parse it directly. All logging goes to logs/app.log and stderr,
@@ -23,7 +24,8 @@ from datetime import date
 
 from config.settings import load_settings
 from database.db import Database
-from database.repository import AccountRepository, ErrorRepository, PostRepository
+from database.repository import AccountRepository, ErrorRepository, PostMediaRepository, PostRepository
+from publisher.auto_publisher import publish_due_posts
 from publisher.queue_manager import prepare_pending_posts
 from scraper.monitor import run_check
 from utils.logger import get_logger, setup_logging
@@ -51,6 +53,19 @@ def cmd_prepare() -> dict:
         error_repo = ErrorRepository(db)
         prepared = prepare_pending_posts(post_repo, account_repo, error_repo, settings.tesseract_path)
         return {"prepared": prepared}
+    finally:
+        db.close()
+
+
+def cmd_publish() -> dict:
+    settings = load_settings()
+    db = Database(settings.database_file_path)
+    db.initialize_schema()
+    try:
+        post_repo = PostRepository(db)
+        post_media_repo = PostMediaRepository(db)
+        error_repo = ErrorRepository(db)
+        return publish_due_posts(settings, post_repo, post_media_repo, error_repo)
     finally:
         db.close()
 
@@ -93,12 +108,13 @@ def cmd_gui() -> None:
 
 
 def cmd_daemon() -> None:
-    """Run --check then --prepare forever on settings.polling_interval_minutes.
+    """Run --check, --prepare, then --publish forever on settings.polling_interval_minutes.
 
     Each cycle is isolated in its own try/except: a failure (network outage,
-    rate limit, OCR crash) is logged and counted as an error, but never stops
-    the loop. This is what makes 24/7 unattended operation possible — restart
-    the process and it just picks back up on the next interval.
+    rate limit, OCR crash, Graph API error) is logged and counted as an error,
+    but never stops the loop. This is what makes 24/7 unattended operation
+    possible — restart the process and it just picks back up on the next
+    interval, since all retry/queue state lives in SQLite, not memory.
     """
     settings = load_settings()
     interval_seconds = settings.polling_interval_minutes * 60
@@ -115,6 +131,12 @@ def cmd_daemon() -> None:
             )
             prepare_result = cmd_prepare()
             logger.info("Daemon cycle: prepared %d post(s).", prepare_result["prepared"])
+            publish_result = cmd_publish()
+            logger.info(
+                "Daemon cycle: published %d post(s), %d failed.",
+                publish_result["published"],
+                publish_result["failed"],
+            )
         except Exception:
             logger.exception("Daemon cycle failed; will retry next interval.")
 
@@ -128,10 +150,13 @@ def main() -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--check", action="store_true", help="Scan monitored accounts for new posts")
     group.add_argument("--prepare", action="store_true", help="Run OCR + caption prep on the queue")
+    group.add_argument(
+        "--publish", action="store_true", help="Publish due 'ready' posts to the destination IG account"
+    )
     group.add_argument("--status", action="store_true", help="Print a dashboard-style status summary")
     group.add_argument("--gui", action="store_true", help="Launch the desktop GUI")
     group.add_argument(
-        "--daemon", action="store_true", help="Run check+prepare forever on the configured interval"
+        "--daemon", action="store_true", help="Run check+prepare+publish forever on the configured interval"
     )
     args = parser.parse_args()
 
@@ -154,6 +179,8 @@ def main() -> int:
             output = cmd_check()
         elif args.prepare:
             output = cmd_prepare()
+        elif args.publish:
+            output = cmd_publish()
         else:
             output = cmd_status()
         print(json.dumps(output, indent=2))

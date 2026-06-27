@@ -11,7 +11,7 @@ from pathlib import Path
 
 from config.settings import Settings
 from database.db import Database
-from database.repository import AccountRepository, ErrorRepository, PostRepository
+from database.repository import AccountRepository, ErrorRepository, PostMediaRepository, PostRepository
 from scraper.instagram_client import InstagramClient
 from utils.exceptions import ScraperError
 from utils.logger import get_logger
@@ -43,6 +43,7 @@ def check_account(
     client: InstagramClient,
     account_repo: AccountRepository,
     post_repo: PostRepository,
+    post_media_repo: PostMediaRepository,
     error_repo: ErrorRepository,
 ) -> dict:
     """Check one account for a new post. Returns a result dict (never raises)."""
@@ -58,23 +59,51 @@ def check_account(
             return result
 
         account = account_repo.upsert(username)
-        post = post_repo.create(
+        post_repo.create(
             account_id=account.id,
             shortcode=latest.shortcode,
             post_url=latest.post_url,
             caption=latest.caption,
             posted_at=latest.posted_at,
+            is_carousel=latest.is_carousel,
         )
+        # Set as soon as the row exists so the except block below can mark it
+        # 'error' instead of leaving it stuck at 'new' forever if the download fails.
+        result["shortcode"] = latest.shortcode
+
+        image_slides = [m for m in latest.media if not m.is_video]
+        skipped_video_slides = len(latest.media) - len(image_slides)
+        if skipped_video_slides:
+            logger.warning(
+                "Post %s from @%s has %d video slide(s); video reposting is not supported, skipping them.",
+                latest.shortcode, username, skipped_video_slides,
+            )
+
+        if not image_slides:
+            # Video-only post (no image slides at all) — nothing to repost.
+            error_repo.log("scraper", "Video-only post; repost not supported", username)
+            post_repo.mark_error(latest.shortcode)
+            account_repo.mark_checked(username, latest.shortcode)
+            logger.info("Skipped video-only post %s from @%s", latest.shortcode, username)
+            return result
 
         dest_dir = account_download_dir(settings.download_folder_path, username)
-        image_path = dest_dir / f"{latest.shortcode}.jpg"
-        client.download_image(latest, image_path)
-        post_repo.mark_downloaded(latest.shortcode, str(image_path))
+        post = post_repo.get_by_shortcode(latest.shortcode)
+        for position, slide in enumerate(image_slides):
+            suffix = "" if position == 0 else f"_{position}"
+            image_path = dest_dir / f"{latest.shortcode}{suffix}.jpg"
+            client.download_image(slide.url, latest.shortcode, image_path)
+            if position == 0:
+                post_repo.mark_downloaded(latest.shortcode, str(image_path))
+            else:
+                post_media_repo.add(post.id, position, str(image_path))
 
         account_repo.mark_checked(username, latest.shortcode)
         result["new_post"] = True
-        result["shortcode"] = latest.shortcode
-        logger.info("Downloaded new post %s from @%s", latest.shortcode, username)
+        logger.info(
+            "Downloaded new post %s from @%s (%d slide(s))",
+            latest.shortcode, username, len(image_slides),
+        )
         return result
 
     except ScraperError as exc:
@@ -82,6 +111,7 @@ def check_account(
         error_repo.log("scraper", str(exc), username)
         if result["shortcode"]:
             post_repo.mark_error(result["shortcode"])
+        account_repo.mark_checked(username)
         result["error"] = str(exc)
         return result
 
@@ -90,6 +120,7 @@ def run_check(settings: Settings, db: Database) -> dict:
     """Run one full monitoring pass across all active accounts. Returns a summary dict."""
     account_repo = AccountRepository(db)
     post_repo = PostRepository(db)
+    post_media_repo = PostMediaRepository(db)
     error_repo = ErrorRepository(db)
 
     sync_accounts_file(settings, account_repo)
@@ -104,7 +135,7 @@ def run_check(settings: Settings, db: Database) -> dict:
 
     accounts = account_repo.list_all(active_only=True)
     results = [
-        check_account(acc.username, settings, client, account_repo, post_repo, error_repo)
+        check_account(acc.username, settings, client, account_repo, post_repo, post_media_repo, error_repo)
         for acc in accounts
     ]
 

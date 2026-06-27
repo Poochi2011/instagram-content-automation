@@ -21,6 +21,14 @@ SESSIONS_DIR = Path(__file__).resolve().parent.parent / "config" / "sessions"
 
 
 @dataclass
+class MediaItem:
+    """One slide of a post (a single-image post has exactly one)."""
+
+    url: str
+    is_video: bool
+
+
+@dataclass
 class PostData:
     """Plain data pulled from an instaloader Post, decoupled from the library type."""
 
@@ -28,8 +36,8 @@ class PostData:
     post_url: str
     caption: Optional[str]
     posted_at: str
-    image_url: str
-    is_video: bool
+    is_carousel: bool
+    media: list[MediaItem]
 
 
 class InstagramClient:
@@ -99,8 +107,8 @@ class InstagramClient:
                     post_url=f"https://www.instagram.com/p/{post.shortcode}/",
                     caption=post.caption,
                     posted_at=post.date_utc.isoformat(),
-                    image_url=post.url,
-                    is_video=post.is_video,
+                    is_carousel=(post.typename == "GraphSidecar"),
+                    media=self._extract_media(post),
                 )
             return None
         except instaloader.exceptions.ProfileNotExistsException as exc:
@@ -112,11 +120,24 @@ class InstagramClient:
         except instaloader.exceptions.InstaloaderException as exc:
             raise ScraperError(f"Failed to fetch latest post for '{username}': {exc}") from exc
 
-    def download_image(self, post: PostData, destination_path) -> None:
-        """Download a post's image to an exact file path using the loader's HTTP session."""
+    @staticmethod
+    def _extract_media(post) -> list[MediaItem]:
+        """All slides of a post. Video slides are included (is_video=True) but the caller
+        does not download or repost them — video reposting is out of scope (the loader is
+        configured with download_videos=False project-wide).
+        """
+        if post.typename == "GraphSidecar":
+            return [
+                MediaItem(url=node.video_url if node.is_video else node.display_url, is_video=node.is_video)
+                for node in post.get_sidecar_nodes()
+            ]
+        return [MediaItem(url=post.url, is_video=post.is_video)]
+
+    def download_image(self, image_url: str, shortcode: str, destination_path) -> None:
+        """Download a single image slide to an exact file path using the loader's HTTP session."""
         try:
-            self._loader.context.get_and_write_raw(post.image_url, str(destination_path))
+            self._loader.context.get_and_write_raw(image_url, str(destination_path))
         except instaloader.exceptions.InstaloaderException as exc:
-            raise DownloadError(f"Failed to download image for {post.shortcode}: {exc}") from exc
+            raise DownloadError(f"Failed to download image for {shortcode}: {exc}") from exc
         except OSError as exc:
-            raise DownloadError(f"Failed to write image file for {post.shortcode}: {exc}") from exc
+            raise DownloadError(f"Failed to write image file for {shortcode}: {exc}") from exc

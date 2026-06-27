@@ -30,6 +30,18 @@ class OCRError(AppError):
     """Raised when text extraction from an image fails."""
 
 
+class PublisherError(AppError):
+    """Raised when publishing a post to the destination Instagram account fails."""
+
+
+class TransientPublishError(PublisherError):
+    """Retryable failure (network blip, rate limit, container still processing)."""
+
+
+class PermanentPublishError(PublisherError):
+    """Non-retryable failure (bad token, malformed media, rejected content)."""
+
+
 class DatabaseError(AppError):
     """Raised for SQLite connection, schema, or query failures."""
 

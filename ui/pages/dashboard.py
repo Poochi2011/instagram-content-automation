@@ -6,10 +6,22 @@ from datetime import date
 
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout, QWidget
 
+from database.db import Database
 from scraper.monitor import run_check
 from ui.widgets.data_table import SearchableTable
 from ui.widgets.stat_card import StatCard
 from ui.workers import CallableWorker
+
+
+def _run_check_isolated(settings) -> dict:
+    """Run a check on its own DB connection — never share the GUI thread's
+    sqlite3 connection with a background QThread."""
+    db = Database(settings.database_file_path)
+    db.initialize_schema()
+    try:
+        return run_check(settings, db)
+    finally:
+        db.close()
 
 
 class DashboardPage(QWidget):
@@ -115,7 +127,7 @@ class DashboardPage(QWidget):
         self.progress.setVisible(True)
         self.status_subtitle.setText("Scanning monitored accounts...")
 
-        self._worker = CallableWorker(run_check, self._context.settings, self._context.db)
+        self._worker = CallableWorker(_run_check_isolated, self._context.settings)
         self._worker.signals.finished.connect(self._on_check_finished)
         self._worker.signals.failed.connect(self._on_check_failed)
         self._worker.start()

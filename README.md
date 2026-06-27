@@ -1,8 +1,16 @@
 # Instagram Content Automation
 
-Monitors a list of Instagram accounts, downloads new posts, runs OCR on the image,
-and prepares a repost caption — with a desktop GUI, a JSON-emitting CLI for n8n,
-and a `--daemon` mode for unattended 24/7 operation.
+Monitors a list of Instagram accounts, downloads new posts (including full
+carousels), runs OCR on the image, builds a repost caption, and **automatically
+publishes** it to a destination Instagram account via the Graph API — no manual
+review step. Has a desktop GUI, a JSON-emitting CLI for n8n, and a `--daemon`
+mode for unattended 24/7 operation.
+
+**This auto-publishes without a human checking each post first.** That was a
+deliberate choice for this deployment (the source accounts have authorized
+republishing), but it does mean a bad OCR read, wrong caption, or scraper edge
+case goes out publicly with nothing catching it before it does. The queue page
+in the GUI still shows everything that was published/failed after the fact.
 
 ## Setup
 
@@ -23,6 +31,25 @@ Tesseract OCR must be installed separately (default path:
    set `instagram_username` / `instagram_password`. The app logs in once and
    saves a session file under `config/sessions/` so it never has to re-send
    the password (or hit a 2FA prompt) on every scheduled check.
+4. To enable auto-publishing, set in `config/config.json` (or the Settings page):
+   - `ig_dest_access_token` — a long-lived Graph API access token for the
+     **destination** account (the one that will post). Requires that account
+     to be an Instagram Business/Creator account linked to a Facebook Page,
+     and a Meta Developer App with the `instagram_content_publish` permission.
+   - `ig_dest_business_account_id` — that destination account's IG Business
+     Account ID (from the Graph API, not the username).
+   - `media_public_base_url` — a public URL prefix the Graph API can fetch
+     downloaded images from. **Graph API fetches the image itself; a local
+     file path will never work**, even with `--daemon` on your own PC. Set
+     this to your repo **root** (not `/downloads` — the app already appends
+     the `downloads/<account>/<file>.jpg` part), e.g.
+     `https://raw.githubusercontent.com/<you>/<repo>/main` — but that only
+     works if the repo is **public** (Graph API can't authenticate to fetch
+     from a private repo). If you want to keep the repo private, point this
+     at your own CDN/object storage instead.
+   - `max_publish_per_day` (default 10), `max_publish_per_cycle` (default 1),
+     `publish_retry_max_attempts` (default 5), `publish_retry_backoff_minutes`
+     (default 15, doubles each retry).
 
 ## Run
 
@@ -30,9 +57,21 @@ Tesseract OCR must be installed separately (default path:
 python main.py --gui        # desktop app
 python main.py --check      # one scan, JSON to stdout (for n8n)
 python main.py --prepare    # OCR + caption prep on the queue, JSON to stdout
+python main.py --publish    # publish due 'ready' posts to the destination account
 python main.py --status     # dashboard-style JSON summary
-python main.py --daemon     # run check+prepare forever on the configured interval
+python main.py --daemon     # run check+prepare+publish forever on the configured interval
 ```
+
+### Carousels and video — what's actually supported
+
+- **Multi-image carousels are fully supported**: every image slide is
+  downloaded, OCR'd (cover slide only), and republished as a real Instagram
+  carousel (not flattened to one image).
+- **Video is out of scope** — both standalone video/Reels posts and video
+  slides *within* a carousel. The scraper is configured with
+  `download_videos=False` project-wide; a post with image slides "loses" any
+  video slides (logged, not silently dropped), and a post that's video-only
+  is marked `error` with a logged reason rather than queued.
 
 `--check` / `--prepare` / `--status` print one JSON object to stdout and nothing
 else — safe to pipe into n8n's Execute Command node. All logs go to
@@ -46,16 +85,23 @@ infrastructure on a cron schedule (hourly by default).
 
 **One-time setup:**
 
-1. Push this project to a GitHub repo (private recommended — it'll contain
-   downloaded images).
+1. Push this project to a GitHub repo. **Auto-publish needs `media_public_base_url`
+   to be a publicly fetchable URL** — if you use the default
+   `raw.githubusercontent.com` option, that means **this repo must be public**
+   (it'll contain downloaded images). If you'd rather keep it private, host
+   the `downloads/` folder on your own CDN/object storage and point
+   `MEDIA_PUBLIC_BASE_URL` there instead.
 2. In the repo: **Settings → Secrets and variables → Actions → New repository
-   secret**. Add `INSTAGRAM_USERNAME` and `INSTAGRAM_PASSWORD`.
+   secret**. Add `INSTAGRAM_USERNAME`, `INSTAGRAM_PASSWORD`, and for
+   auto-publish: `IG_DEST_ACCESS_TOKEN`, `IG_DEST_BUSINESS_ACCOUNT_ID`,
+   `MEDIA_PUBLIC_BASE_URL`.
 3. Push to the default branch — the workflow runs automatically on its cron
    schedule, or trigger it immediately from the **Actions** tab → "Instagram
    scan" → **Run workflow**.
-4. Each run commits the updated `database/app.db` and any new files under
-   `downloads/` back to the repo. `git pull` locally to review the queue in
-   the GUI.
+4. Each run downloads new posts, commits/pushes the media (so it's live at
+   `MEDIA_PUBLIC_BASE_URL` before publishing references it), runs `--publish`,
+   then commits the resulting publish status. `git pull` locally to review the
+   queue in the GUI.
 
 **Known tradeoffs of this approach** (you chose it for cost/setup simplicity —
 worth knowing going in):
@@ -74,6 +120,17 @@ worth knowing going in):
 - To change how often it runs, edit the `cron:` line in
   `.github/workflows/scan.yml` (this controls cloud frequency — the
   `polling_interval_minutes` setting only affects local `--daemon` runs).
+- Auto-publish is capped at `max_publish_per_day` (default 10) and
+  `max_publish_per_cycle` (default 1, i.e. one new post goes out per run) —
+  raise these in Settings/config.json if hourly + 1/cycle is too slow to drain
+  a backlog.
+- Scraping via Instaloader and posting via the Graph API are still two
+  separate risk surfaces: scraping is against Instagram's unofficial web
+  interface regardless of any agreement with the source accounts, and the
+  destination account doing frequent automated carousel posts is exactly the
+  pattern Instagram's spam/automation detection watches for. Keep an eye on
+  the `errors` table / Logs page for sudden spikes, which usually means a
+  rate limit or a flag, not a code bug.
 
 For local manual use, `--daemon` still works the same way (loops forever,
 isolates failures per cycle) if you ever want to run it on your own machine

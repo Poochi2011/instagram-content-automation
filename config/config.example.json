@@ -7,5 +7,12 @@
   "theme": "dark",
   "log_level": "INFO",
   "instagram_username": "",
-  "instagram_password": ""
+  "instagram_password": "",
+  "ig_dest_access_token": "",
+  "ig_dest_business_account_id": "",
+  "media_public_base_url": "",
+  "max_publish_per_cycle": 1,
+  "max_publish_per_day": 10,
+  "publish_retry_max_attempts": 5,
+  "publish_retry_backoff_minutes": 15
 }

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from database.db import Database
-from database.models import Account, ErrorLog, Post
+from database.models import Account, ErrorLog, Post, PostMedia
 
 
 class AccountRepository:
@@ -79,12 +79,13 @@ class PostRepository:
         post_url: str,
         caption: Optional[str],
         posted_at: Optional[str],
+        is_carousel: bool = False,
     ) -> Post:
         with self._db.cursor() as cur:
             cur.execute(
-                "INSERT INTO posts (account_id, shortcode, post_url, caption, posted_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (account_id, shortcode, post_url, caption, posted_at),
+                "INSERT INTO posts (account_id, shortcode, post_url, caption, posted_at, is_carousel) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (account_id, shortcode, post_url, caption, posted_at, int(is_carousel)),
             )
         return self.get_by_shortcode(shortcode)  # type: ignore[return-value]
 
@@ -145,6 +146,48 @@ class PostRepository:
         with self._db.cursor() as cur:
             cur.execute("UPDATE posts SET status = 'error' WHERE shortcode = ?", (shortcode,))
 
+    def list_publishable(self, now_iso: str) -> list[Post]:
+        """'ready' posts due for a publish attempt now, oldest source post first."""
+        rows = self._db.connection.execute(
+            "SELECT * FROM posts WHERE status = 'ready' "
+            "AND (next_publish_attempt_at IS NULL OR next_publish_attempt_at <= ?) "
+            "ORDER BY created_at ASC",
+            (now_iso,),
+        ).fetchall()
+        return [Post.from_row(r) for r in rows]
+
+    def mark_published(self, shortcode: str, ig_media_id: str) -> None:
+        with self._db.cursor() as cur:
+            cur.execute(
+                "UPDATE posts SET status = 'processed', published_at = datetime('now'), "
+                "ig_media_id = ? WHERE shortcode = ?",
+                (ig_media_id, shortcode),
+            )
+
+    def record_publish_failure(self, shortcode: str, error_message: str, next_attempt_at: str) -> None:
+        """Transient failure: bump the attempt count and schedule a retry. Stays 'ready'."""
+        with self._db.cursor() as cur:
+            cur.execute(
+                "UPDATE posts SET publish_attempts = publish_attempts + 1, "
+                "last_publish_error = ?, next_publish_attempt_at = ? WHERE shortcode = ?",
+                (error_message, next_attempt_at, shortcode),
+            )
+
+    def mark_publish_permanently_failed(self, shortcode: str, error_message: str) -> None:
+        """Permanent failure or retries exhausted: stop retrying, surface it as an error."""
+        with self._db.cursor() as cur:
+            cur.execute(
+                "UPDATE posts SET status = 'error', publish_attempts = publish_attempts + 1, "
+                "last_publish_error = ? WHERE shortcode = ?",
+                (error_message, shortcode),
+            )
+
+    def count_published_since(self, since_iso: str) -> int:
+        row = self._db.connection.execute(
+            "SELECT COUNT(*) AS n FROM posts WHERE published_at >= ?", (since_iso,)
+        ).fetchone()
+        return row["n"]
+
     def count_downloaded_since(self, since_iso_date: str) -> int:
         row = self._db.connection.execute(
             "SELECT COUNT(*) AS n FROM posts WHERE downloaded_at >= ?", (since_iso_date,)
@@ -161,6 +204,27 @@ class PostRepository:
         attempted = row["attempted"] or 0
         succeeded = row["succeeded"] or 0
         return (succeeded / attempted * 100.0) if attempted else 0.0
+
+
+class PostMediaRepository:
+    """Extra slides (position >= 1) for carousel posts. Position 0 lives on posts.image_path."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def add(self, post_id: int, position: int, image_path: str, is_video: bool = False) -> None:
+        with self._db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO post_media (post_id, position, image_path, is_video) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(post_id, position) DO NOTHING",
+                (post_id, position, image_path, int(is_video)),
+            )
+
+    def list_for_post(self, post_id: int) -> list[PostMedia]:
+        rows = self._db.connection.execute(
+            "SELECT * FROM post_media WHERE post_id = ? ORDER BY position ASC", (post_id,)
+        ).fetchall()
+        return [PostMedia.from_row(r) for r in rows]
 
 
 class ErrorRepository:
