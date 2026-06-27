@@ -22,6 +22,19 @@ class AccountRepository:
             )
         return self.get_by_username(username)  # type: ignore[return-value]
 
+    def import_usernames(self, usernames: list[str]) -> int:
+        """Insert any usernames not already present. Returns the count of newly added accounts."""
+        added = 0
+        for username in usernames:
+            with self._db.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO accounts (username) VALUES (?) ON CONFLICT(username) DO NOTHING",
+                    (username,),
+                )
+                if cur.rowcount > 0:
+                    added += 1
+        return added
+
     def get_by_username(self, username: str) -> Optional[Account]:
         row = self._db.connection.execute(
             "SELECT * FROM accounts WHERE username = ?", (username,)

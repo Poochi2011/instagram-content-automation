@@ -1,7 +1,16 @@
 # One Instagram username per line. Lines starting with # are ignored.
+# This file is only auto-imported into the database on first launch (empty
+# accounts table). After that, the database/GUI is the source of truth —
+# editing this file does nothing unless you use "Import from File..." in the
+# Accounts page.
 heather_watts_therapy
 narcissist_specialist
 narcissistrecovery
 zendaleewilliams
 insideparenting
 amythelifecoach
+quantafreedomhealing
+coachelizabethshaw
+brandontalksmarriage
+lawofattractionlive
+silenceofthenarcs

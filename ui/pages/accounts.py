@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
+from pathlib import Path
 
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from scraper.monitor import import_accounts_from_file
 from ui.widgets.data_table import SearchableTable
 
 
@@ -36,10 +47,18 @@ class AccountsPage(QWidget):
         self.remove_btn = QPushButton("Remove Account")
         self.remove_btn.setObjectName("dangerButton")
         self.remove_btn.clicked.connect(self._remove_selected)
+        self.import_btn = QPushButton("Import from File...")
+        self.import_btn.setObjectName("secondaryButton")
+        self.import_btn.clicked.connect(self._import_from_file)
         actions.addWidget(self.toggle_btn)
         actions.addWidget(self.remove_btn)
+        actions.addWidget(self.import_btn)
         actions.addStretch()
         layout.addLayout(actions)
+
+        self.import_status_label = QLabel("")
+        self.import_status_label.setObjectName("pageSubtitle")
+        layout.addWidget(self.import_status_label)
 
         self.refresh()
 
@@ -114,4 +133,12 @@ class AccountsPage(QWidget):
         if not username:
             return
         self._context.account_repo.remove(username)
+        self.refresh()
+
+    def _import_from_file(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(self, "Import accounts from file", "", "Text files (*.txt)")
+        if not file_path:
+            return
+        added = import_accounts_from_file(Path(file_path), self._context.account_repo)
+        self.import_status_label.setText(f"Imported {added} new account(s) from {Path(file_path).name}.")
         self.refresh()

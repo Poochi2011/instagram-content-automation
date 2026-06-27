@@ -20,21 +20,42 @@ from utils.paths import account_download_dir
 logger = get_logger(__name__)
 
 
-def sync_accounts_file(settings: Settings, account_repo: AccountRepository) -> list[str]:
-    """Read accounts.txt and ensure every listed username exists in the DB."""
-    path = settings.accounts_file_path
+def _read_usernames(path: Path) -> list[str]:
     if not path.exists():
-        path.write_text("# One Instagram username per line.\n", encoding="utf-8")
         return []
-
     usernames = []
     for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+        line = line.strip().lstrip("@")
         if not line or line.startswith("#"):
             continue
         usernames.append(line)
-        account_repo.upsert(line)
     return usernames
+
+
+def import_accounts_from_file(path: Path, account_repo: AccountRepository) -> int:
+    """Import usernames from a text file (one per line, '#' comments ignored).
+
+    Safe to call repeatedly — existing usernames are left untouched (no duplicates,
+    no resetting is_active/last_checked_at). Returns the count of newly added accounts.
+    """
+    return account_repo.import_usernames(_read_usernames(path))
+
+
+def bootstrap_accounts_if_empty(settings: Settings, account_repo: AccountRepository) -> None:
+    """One-time seed from accounts.txt, only when the accounts table is still empty.
+
+    After that first import, the DB (and therefore the GUI) is the source of truth —
+    accounts.txt is never read automatically again. Use import_accounts_from_file()
+    for any later, explicit bulk import.
+    """
+    if account_repo.list_all():
+        return
+
+    path = settings.accounts_file_path
+    if not path.exists():
+        path.write_text("# One Instagram username per line.\n", encoding="utf-8")
+        return
+    import_accounts_from_file(path, account_repo)
 
 
 def check_account(
@@ -123,7 +144,7 @@ def run_check(settings: Settings, db: Database) -> dict:
     post_media_repo = PostMediaRepository(db)
     error_repo = ErrorRepository(db)
 
-    sync_accounts_file(settings, account_repo)
+    bootstrap_accounts_if_empty(settings, account_repo)
 
     client = InstagramClient(settings.instagram_username, settings.instagram_password)
     try:
