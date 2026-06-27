@@ -30,6 +30,29 @@ jobs:
           path: config/sessions
           key: instagram-session-${{ github.repository }}
 
+      - name: Seed Instagram session from secret (first run / cache-miss fallback)
+        # A brand-new login from GitHub's IP is the case most likely to trigger
+        # Instagram's "unfamiliar device" challenge, which a headless runner can't
+        # answer. INSTAGRAM_SESSION_B64 carries a session file created by logging
+        # in once, interactively, from a residential IP — see README for how to
+        # generate it. Only used if the cache above didn't already restore a
+        # session (cache wins once it exists, since it reflects the most recent
+        # successful run).
+        env:
+          INSTAGRAM_SESSION_B64: ${{ secrets.INSTAGRAM_SESSION_B64 }}
+          INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}
+        run: |
+          if [ -n "$INSTAGRAM_SESSION_B64" ] && [ -n "$INSTAGRAM_USERNAME" ]; then
+            mkdir -p config/sessions
+            session_path="config/sessions/${INSTAGRAM_USERNAME}.session"
+            if [ ! -f "$session_path" ]; then
+              echo "$INSTAGRAM_SESSION_B64" | base64 -d > "$session_path"
+              echo "Seeded session for $INSTAGRAM_USERNAME from secret (no cached session found)."
+            else
+              echo "Cached session already present for $INSTAGRAM_USERNAME; not overwriting with secret."
+            fi
+          fi
+
       - name: Run check (scrape new posts)
         env:
           INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}

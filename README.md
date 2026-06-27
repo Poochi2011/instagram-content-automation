@@ -27,10 +27,33 @@ Tesseract OCR must be installed separately (default path:
 1. List the Instagram usernames to monitor in `accounts.txt`, one per line.
 2. Edit `config/config.json` (created automatically on first run from
    `config/config.example.json`) — or use the Settings page in the GUI.
-3. If you want authenticated scraping (private profiles, higher rate limits),
-   set `instagram_username` / `instagram_password`. The app logs in once and
-   saves a session file under `config/sessions/` so it never has to re-send
-   the password (or hit a 2FA prompt) on every scheduled check.
+3. **Authenticated scraping (strongly recommended).** Anonymous Instagram
+   access gets rate-limited/blocked hard and fast, especially from datacenter
+   IPs (GitHub Actions runners included) — logged-in requests get a much
+   higher limit. Use a dedicated/throwaway account, not your main one.
+   - Set `instagram_username` / `instagram_password` in `config/config.json`
+     and run `python main.py --check` once **locally**, on your own
+     (residential) connection. If Instagram doesn't challenge the login, the
+     app saves a session file to `config/sessions/<username>.session`
+     automatically — it never re-sends the password or re-prompts after that.
+   - If Instagram *does* challenge the login (common for a brand-new
+     account's first automated-looking login — a verification code, "was
+     this you?", etc.): open that challenge in the real Instagram app/site
+     yourself first, then run:
+     `.\venv\Scripts\instaloader --login=<username> --sessionfile=config/sessions/<username>.session`
+     This handles the password/2FA prompt interactively in your own terminal
+     and saves the session straight to the path the app expects.
+   - For the GitHub Actions deployment, the session file also needs to reach
+     the cloud runner. Add `INSTAGRAM_USERNAME`/`INSTAGRAM_PASSWORD` as repo
+     secrets, **and** base64-encode the local session file and add it as
+     `INSTAGRAM_SESSION_B64`:
+     `[Convert]::ToBase64String([IO.File]::ReadAllBytes("config\sessions\<username>.session"))`
+     (PowerShell). This seeds the very first cloud run with an
+     already-authenticated session — created from your residential IP, not
+     GitHub's — so it isn't the one place a fresh, challenge-prone login gets
+     attempted from a datacenter IP. After the first successful run, the
+     workflow's own session cache (`actions/cache@v4`) takes over and the
+     secret is only used again if that cache is ever lost.
 4. To enable auto-publishing, set in `config/config.json` (or the Settings page):
    - `ig_dest_access_token` — a long-lived Graph API access token for the
      **destination** account (the one that will post). Requires that account
