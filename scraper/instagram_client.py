@@ -52,6 +52,14 @@ class InstagramClient:
             save_metadata=False,
             post_metadata_txt_pattern="",
             quiet=True,
+            # Defaults are request_timeout=300s x max_connection_attempts=3 — up to
+            # 15 minutes hung on a single rate-limited/unreachable account. With
+            # several accounts checked every cycle, that risks an hourly cron job
+            # piling up for hours. Fail fast instead; a rate-limited account just
+            # gets logged as an error and retried next cycle.
+            request_timeout=20.0,
+            max_connection_attempts=1,
+            sleep=False,
         )
         self._username = username
         self._password = password
