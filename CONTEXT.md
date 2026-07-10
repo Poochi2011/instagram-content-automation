@@ -1,16 +1,15 @@
 # Instagram Content Automation — Context
 
 ## Stack
-Python 3.12 (venv pinned via `py -3.12`), Instaloader, pytesseract + Tesseract-OCR,
-SQLite, PySide6 (Qt6) for the desktop GUI. CLI designed for n8n consumption.
-Camoufox (anti-detect Firefox, github.com/daijro/camoufox) available via
-`scraper/browser.py` as a stealth-browser fallback for when Instaloader's direct
-HTTP API gets fingerprinted/429'd.
+Python 3.12 (venv pinned via `py -3.12`), Camoufox (anti-detect Firefox,
+github.com/daijro/camoufox) as the default scraper, Instaloader kept but
+unused (see below), pytesseract + Tesseract-OCR, SQLite, PySide6 (Qt6) for
+the desktop GUI. CLI designed for n8n consumption.
 
 ## Project structure
 - `config/` — `settings.py` (Settings dataclass, load/save config.json), `config.json` (gitignored, real values), `sessions/` (gitignored Instagram session files)
 - `database/` — `schema.sql`, `db.py` (connection/init), `models.py` (dataclasses), `repository.py` (all SQL)
-- `scraper/` — `instagram_client.py` (Instaloader wrapper + session persistence, carousel-aware), `monitor.py` (check-accounts orchestration), `browser.py` (Camoufox stealth-browser context manager, proxy+geoip aware)
+- `scraper/` — `camoufox_client.py` (default scraper: `CamoufoxInstagramClient`, anonymous browser-rendered scraping, single-image-only), `browser.py` (Camoufox launcher, proxy+geoip aware), `instagram_client.py` (Instaloader wrapper, carousel-aware — kept but no longer used by `monitor.py`, see Active work), `monitor.py` (check-accounts orchestration)
 - `ocr/extractor.py` — Tesseract wrapper
 - `publisher/` — `caption_builder.py`, `queue_manager.py` (OCR + caption prep), `graph_api_client.py` (Instagram Graph API content-publishing wrapper), `auto_publisher.py` (publish orchestration: retry/backoff/daily cap)
 - `ui/` — `app.py` (MainWindow/AppContext), `theme.py` (QSS), `workers.py` (QThread helper), `pages/`, `widgets/`
@@ -21,56 +20,69 @@ HTTP API gets fingerprinted/429'd.
 
 ## Active work
 
-**Comment auto-reply pipeline (July 2026):** `--reply` fetches comments on the
-destination account's recent posts (Graph API, no scraping), classifies them
-(rule-based, zero cost — `publisher/reply_drafter.py`), and answers them with
-short templated replies via `POST /{comment-id}/replies`. Crisis language,
-real questions, and accusations are **flagged for a human** (GUI Comments
-page), spam/hostility is skipped. State lives in the new `comments` table
-(UNIQUE ig_comment_id = double-reply impossible). `reply_dry_run` defaults ON:
-drafts are stored but nothing posts until the GitHub repo *variable*
-`REPLY_DRY_RUN=false` is set (or config.json flipped). Caps:
-`max_replies_per_cycle`=10, `max_replies_per_day`=40. Verified end-to-end
-against a mocked Graph API (46 checks) and a real dry-run (2 real comments
-fetched + drafted). NOTE: with the current token the comment `username` field
-comes back None, so self-comment/already-replied detection can't work until
-the token is regenerated with `instagram_manage_comments` (blocked on a Meta
-account security lock as of 2026-07-04; regen steps are in the chat log —
-Business Settings → System users → Post Automation Bot → Generate token with
-the 6 scopes, expiration Never).
+**Camoufox is now the default scraper (2026-07-10).** Instagram now blocks
+anonymous GraphQL access outright (Instaloader's private-API calls), proxy or
+not — confirmed by testing, corroborated by Instaloader's own docs and a live
+2026 upstream issue. The login-based fallback (account `voidvessel85`) also
+hit a soft "please wait a few minutes" lock on first live login attempt and
+didn't clear after a retry, so it's not currently usable either. Camoufox
+renders real anonymous browser pages instead (same access a logged-out human
+visitor gets, not subject to that block) — `scraper/camoufox_client.py`'s
+`CamoufoxInstagramClient` mirrors `InstagramClient`'s interface and is what
+`scraper/monitor.py` now uses. **Known regression vs. the old Instaloader
+path: carousels are captured as a single representative image only** —
+multi-slide extraction from the embed page's DOM wasn't solved, so
+`is_carousel` is always `False` on posts from this client. `instagram_client.py`
+(Instaloader) is kept in the codebase, unused, in case the login path recovers
+later.
 
-Auto-publish pipeline added: `--daemon` (and the GitHub Actions workflow) now
-runs check → prepare → **publish** every cycle, with no manual review step —
-this is a deliberate change from the original design (see git history), made
-because the monitored accounts (in `accounts.txt`) have authorized
-republishing to the destination account. Carousels are fully supported
-end-to-end (all image slides downloaded via `post_media` table, OCR'd cover
-slide, republished as a real multi-image carousel via Graph API child +
-parent containers). Video — both standalone posts and video slides inside a
-carousel — is explicitly out of scope (consistent with the pre-existing
-`download_videos=False` on the Instaloader instance); such posts are logged
-and marked `error` rather than queued for partial/wrong reposting.
+**Proxy setup (DataImpulse residential):** `scraper_proxy_url` MUST use a
+**sticky** port (10000-20000), not the rotating default (823/824) — rotating
+hands a fresh exit IP every request, which both looks like a bot and breaks
+Camoufox's geoip-matched fingerprint. MUST also pin a country with
+`__cr.<code>` appended to the username (e.g. `login__cr.in:pass@gw.dataimpulse.com:10000`)
+— an exit country that jumps randomly between sessions (observed: India →
+Spain → Congo) is itself a bot signal. Pinned to `in` to match this project's
+actual origin. This exact value must be set as **both** the local
+`config.json` value AND the GitHub Actions repo secret `SCRAPER_PROXY_URL` —
+they are independent; a value in one does not imply the other has it.
 
-Publish retry state (`publish_attempts`, `next_publish_attempt_at`,
-`last_publish_error`) lives on the `posts` row in SQLite, not in memory, so a
-daemon restart or a fresh Actions run resumes backoff exactly where it left
-off. Daily/per-cycle caps (`max_publish_per_day`=10, `max_publish_per_cycle`=1
-by default) are enforced in `auto_publisher.publish_due_posts()`.
+**Auto-publish pipeline:** the GitHub Actions workflow runs check → prepare →
+publish every cycle, no manual review step — deliberate, since the monitored
+accounts (`accounts.txt`) have authorized republishing. `max_publish_per_day`=10,
+`max_publish_per_cycle`=1 — with the hourly cron this naturally drips
+publishes across the day rather than bursting. Retry state
+(`publish_attempts`, `next_publish_attempt_at`, `last_publish_error`) lives on
+the `posts` row in SQLite, not in memory, so a restart resumes backoff where
+it left off. **Verified live end-to-end 2026-07-10**: scraped, downloaded,
+OCR'd, captioned (with `📌 Reposted from @username` attribution), and
+published a real post to `@activate.you` (media id `18328443421282776`).
+
+**Comment auto-reply pipeline (`--reply`) is written but deliberately NOT
+shipped yet.** It exists only as uncommitted local changes (`config/settings.py`
+reply fields, `database/models.py`/`repository.py` Comment*/CommentRepository,
+`database/schema.sql` comments table, `publisher/graph_api_client.py` comment
+methods, `main.py --reply`, plus untracked `publisher/comment_responder.py`,
+`publisher/reply_drafter.py`, `ui/pages/comments.py`) — none of this is in the
+repo. It was mixed into the same working tree as the scraper work above and
+had to be deliberately excluded, file-by-file, to keep the Camoufox fix
+scoped (see git log around 2026-07-10 for the untangling). Do not assume
+`--reply` works in CI until it's committed AND live-tested there — the known
+bug (comment `username` field returns `None`, blocking self-comment/
+already-replied detection; blocked on a Meta account security lock as of
+2026-07-04) still applies whenever this does ship.
 
 24/7 hosting: **GitHub Actions scheduled workflow** (`.github/workflows/scan.yml`,
-hourly cron + manual `workflow_dispatch`). The workflow now does two
-commit/push cycles per run — once after download (so media is live at
-`MEDIA_PUBLIC_BASE_URL` before `--publish` references it; the Graph API fetches
-images itself, it does not accept local files), then again after publish to
-persist status. Secrets: `INSTAGRAM_USERNAME`/`INSTAGRAM_PASSWORD`,
-`IG_DEST_ACCESS_TOKEN`/`IG_DEST_BUSINESS_ACCOUNT_ID`/`MEDIA_PUBLIC_BASE_URL`.
-
-**Not yet tested against real Instagram or the real Graph API** — no live
-scraper or publish run has happened yet. Destination-account Graph API
-credentials are still being set up by the user as of this writing; until
-`ig_dest_access_token`/`ig_dest_business_account_id` are configured,
-`publish_due_posts()` is a no-op (logs and returns early) rather than erroring.
-Also not yet pushed to an actual GitHub repo.
+hourly cron + manual `workflow_dispatch`). Installs Firefox system deps
+(`playwright install-deps firefox`) and caches the ~530MB Camoufox binary
+(`~/.cache/camoufox`, keyed on `requirements.txt`'s hash) so it's not
+re-downloaded every run. Does two commit/push cycles per run — once after
+download (media must be live at `MEDIA_PUBLIC_BASE_URL` before `--publish`
+references it), again after publish to persist status. Secrets:
+`SCRAPER_PROXY_URL`, `IG_DEST_ACCESS_TOKEN`, `IG_DEST_BUSINESS_ACCOUNT_ID`,
+`MEDIA_PUBLIC_BASE_URL`. (`INSTAGRAM_USERNAME`/`PASSWORD`/`SESSION_B64`
+secrets still exist from the old Instaloader-login CI path but are no longer
+read by anything — harmless leftovers, not cleaned up.)
 
 ## Design tokens / conventions
 Dark theme tokens and QSS in `ui/theme.py` (`COLORS` dict). Sidebar/card/table
@@ -78,9 +90,9 @@ styling follows a Linear/Notion-style flat dark UI — no custom fonts bundled,
 uses Segoe UI.
 
 ## External services
-- Instagram (via Instaloader) — anonymous works for public profiles; `instagram_username`/`instagram_password` in config.json enables login + session reuse.
-- Camoufox anti-detect browser — installed via `pip install camoufox[geoip]`; the ~530MB Firefox binary is downloaded once per machine with `python -m camoufox fetch` (lives in the OS per-user cache, NOT in the repo/venv, so CI must run `camoufox fetch` in its setup step). Wrapped by `scraper/browser.py::stealth_browser()`. Not yet wired into `monitor.py` — it's an available fallback path, not the default scraper. Proven (2026-07-06) to anonymously render Instagram profile pages (with real post links) through the residential proxy, when Instaloader's anonymous GraphQL API was blocked outright.
-- DataImpulse residential proxy (`scraper_proxy_url`) — MUST use a **sticky** port (10000-20000), not the rotating default (823/824): rotating hands a fresh exit IP every request, which both looks like a bot and breaks Camoufox's geoip-matched fingerprint. MUST also pin a country with `__cr.<2-letter-code>` appended to the username (e.g. `login__cr.in:pass@gw.dataimpulse.com:10000`) — letting the exit country jump randomly between logins (observed: India → Spain → Congo across three sticky sessions) triggers Instagram's suspicious-login/"please wait a few minutes" soft-block on an account that's logging in from a wildly different geography than its history. Pinned to `in` (India) here to match this project's/account's actual origin.
+- Instagram — scraped anonymously via Camoufox (see Active work); Instaloader kept but unused. `instagram_username`/`instagram_password` in config.json still exist for a possible future login-based path but nothing currently reads them for scraping.
+- Camoufox anti-detect browser — installed via `pip install camoufox[geoip]`; the ~530MB Firefox binary is downloaded once per machine with `python -m camoufox fetch` (lives in the OS per-user cache, NOT in the repo/venv, so CI must run `camoufox fetch` in its setup step, cached across runs). Wrapped by `scraper/browser.py::stealth_browser()`, used by `scraper/camoufox_client.py`. Playwright is pinned to `1.49.0` in requirements.txt — >=1.61 sends a CDP param the Camoufox 135 Firefox build's Juggler protocol rejects (`Browser.new_page` fails).
+- DataImpulse residential proxy (`scraper_proxy_url`) — MUST use a **sticky** port (10000-20000), not the rotating default (823/824): rotating hands a fresh exit IP every request, which both looks like a bot and breaks Camoufox's geoip-matched fingerprint. MUST also pin a country with `__cr.<2-letter-code>` appended to the username (e.g. `login__cr.in:pass@gw.dataimpulse.com:10000`) — letting the exit country jump randomly between logins (observed: India → Spain → Congo across three sticky sessions) triggers Instagram's suspicious-login/"please wait a few minutes" soft-block on an account that's logging in from a wildly different geography than its history. Pinned to `in` (India) here to match this project's/account's actual origin. Set in **both** local `config.json` and the GitHub Actions secret `SCRAPER_PROXY_URL` — independent values, check both when debugging.
 - Tesseract OCR — local binary, path configurable (`tesseract_path` in config.json).
 - Instagram Graph API (destination account auto-publish) — `ig_dest_access_token`/`ig_dest_business_account_id` in config.json; needs a Business/Creator destination account + Meta Developer App.
 - n8n — calls `python main.py --check` / `--prepare` / `--publish` / `--status` via Execute Command, parses the JSON on stdout.
@@ -96,3 +108,5 @@ uses Segoe UI.
 - `auto_publisher.publish_due_posts()` is a deliberate no-op (not an error) when `ig_dest_access_token`/`ig_dest_business_account_id` are blank, so `--daemon`/the Actions workflow can run safely before those secrets are supplied.
 - Retry backoff is exponential (`publish_retry_backoff_minutes * 2^attempts`, capped at 24h) and stored per-post in SQLite (`next_publish_attempt_at`), not in-process — this is what makes retries survive a daemon/Actions restart.
 - `media_public_base_url` must be a URL the Graph API's own servers can fetch from the public internet — never a local path. If using GitHub raw content, the repo must be public.
+- **Check `git status` against the actual repo before trusting local behavior generalizes to CI.** A large chunk of a prior session's work (the whole comment-reply pipeline, plus `scraper_proxy_url` itself) sat as uncommitted local changes for days — everything worked locally (it's the same filesystem) while CI ran the older committed code and had no idea any of it existed. Cost several failed CI runs on 2026-07-10 to untangle (missing `scraper/browser.py`, missing `scraper_proxy_url` field, a workflow step for a CLI flag that didn't exist yet). `git status`/`git diff --stat` at the start of any CI-touching work would have caught this immediately.
+- Also runs hourly on its own — expect `origin/master` to have moved (usually just an `app.db` update) since you last pulled. `database/app.db` is binary and can't auto-merge; on a push rejection, don't force-push — `git reset --soft origin/master && git checkout HEAD -- database/app.db`, then redo whatever local DB changes on top of the fresh copy.
