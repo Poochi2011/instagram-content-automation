@@ -63,7 +63,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add database/app.db downloads/
           git diff --staged --quiet || git commit -m "Automated scan: $(date -u +'%Y-%m-%d %H:%M UTC')"
-          git push
+          git pull --rebase && git push
 
       - name: Run publish (post due items to the destination account)
         env:
