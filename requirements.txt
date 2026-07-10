@@ -3,3 +3,11 @@ pytesseract==0.3.13
 Pillow==11.0.0
 PySide6==6.8.0.2
 requests==2.32.3
+# Anti-detect browser (github.com/daijro/camoufox) for stealth scraping when
+# Instaloader's direct HTTP API gets fingerprinted/rate-limited. After install,
+# fetch the browser binary once with: python -m camoufox fetch
+camoufox[geoip]==0.4.11
+# MUST stay pinned: Playwright >=1.61 sends a viewport.isMobile CDP param that
+# the Camoufox 135 Firefox build's Juggler protocol rejects (Browser.new_page
+# fails). 1.49.0 is the last version verified working with this Camoufox binary.
+playwright==1.49.0
