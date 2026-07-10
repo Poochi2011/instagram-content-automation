@@ -17,6 +17,8 @@ posts from this client.
 
 from __future__ import annotations
 
+import random
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -78,7 +80,9 @@ class CamoufoxInstagramClient:
 
         shortcodes = self._fetch_profile_shortcodes(username, max_posts)
         posts: list[PostData] = []
-        for shortcode in shortcodes:
+        for i, shortcode in enumerate(shortcodes):
+            if i > 0:
+                time.sleep(random.uniform(2.0, 4.0))
             try:
                 post = self._fetch_post(username, shortcode)
             except Exception as exc:

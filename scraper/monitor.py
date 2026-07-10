@@ -7,6 +7,8 @@ talks to InstagramClient or the repositories directly.
 
 from __future__ import annotations
 
+import random
+import time
 from pathlib import Path
 
 from config.settings import Settings
@@ -196,6 +198,17 @@ def backfill_account(
         return result
 
 
+def _stagger() -> None:
+    """Sleep a few seconds between per-account requests through the same browser
+    session. A tight back-to-back burst across many accounts (no gap at all) is a
+    much more bot-like request pattern than a human browsing session ever produces,
+    even routed through a good residential IP -- observed this trip Instagram's
+    login wall on every account in one run (2026-07-10) despite proven success on
+    the same code/proxy minutes earlier with more naturally spaced-out requests.
+    """
+    time.sleep(random.uniform(3.0, 7.0))
+
+
 def run_check(settings: Settings, db: Database) -> dict:
     """Run one full monitoring pass across all active accounts. Returns a summary dict."""
     account_repo = AccountRepository(db)
@@ -208,10 +221,13 @@ def run_check(settings: Settings, db: Database) -> dict:
 
     try:
         with CamoufoxInstagramClient(settings.scraper_proxy_url) as client:
-            results = [
-                check_account(acc.username, settings, client, account_repo, post_repo, post_media_repo, error_repo)
-                for acc in accounts
-            ]
+            results = []
+            for i, acc in enumerate(accounts):
+                if i > 0:
+                    _stagger()
+                results.append(
+                    check_account(acc.username, settings, client, account_repo, post_repo, post_media_repo, error_repo)
+                )
     except ScraperError as exc:
         logger.error("Scraper session failed to start: %s", exc)
         error_repo.log("scraper", str(exc))
@@ -238,13 +254,16 @@ def run_backfill(settings: Settings, db: Database, max_posts_per_account: int) -
 
     try:
         with CamoufoxInstagramClient(settings.scraper_proxy_url) as client:
-            results = [
-                backfill_account(
-                    acc.username, settings, client, account_repo, post_repo, post_media_repo, error_repo,
-                    max_posts_per_account,
+            results = []
+            for i, acc in enumerate(accounts):
+                if i > 0:
+                    _stagger()
+                results.append(
+                    backfill_account(
+                        acc.username, settings, client, account_repo, post_repo, post_media_repo, error_repo,
+                        max_posts_per_account,
+                    )
                 )
-                for acc in accounts
-            ]
     except ScraperError as exc:
         logger.error("Scraper session failed to start: %s", exc)
         error_repo.log("scraper", str(exc))
