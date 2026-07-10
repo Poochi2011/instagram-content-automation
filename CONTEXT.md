@@ -3,11 +3,14 @@
 ## Stack
 Python 3.12 (venv pinned via `py -3.12`), Instaloader, pytesseract + Tesseract-OCR,
 SQLite, PySide6 (Qt6) for the desktop GUI. CLI designed for n8n consumption.
+Camoufox (anti-detect Firefox, github.com/daijro/camoufox) available via
+`scraper/browser.py` as a stealth-browser fallback for when Instaloader's direct
+HTTP API gets fingerprinted/429'd.
 
 ## Project structure
 - `config/` — `settings.py` (Settings dataclass, load/save config.json), `config.json` (gitignored, real values), `sessions/` (gitignored Instagram session files)
 - `database/` — `schema.sql`, `db.py` (connection/init), `models.py` (dataclasses), `repository.py` (all SQL)
-- `scraper/` — `instagram_client.py` (Instaloader wrapper + session persistence, carousel-aware), `monitor.py` (check-accounts orchestration)
+- `scraper/` — `instagram_client.py` (Instaloader wrapper + session persistence, carousel-aware), `monitor.py` (check-accounts orchestration), `browser.py` (Camoufox stealth-browser context manager, proxy+geoip aware)
 - `ocr/extractor.py` — Tesseract wrapper
 - `publisher/` — `caption_builder.py`, `queue_manager.py` (OCR + caption prep), `graph_api_client.py` (Instagram Graph API content-publishing wrapper), `auto_publisher.py` (publish orchestration: retry/backoff/daily cap)
 - `ui/` — `app.py` (MainWindow/AppContext), `theme.py` (QSS), `workers.py` (QThread helper), `pages/`, `widgets/`
@@ -17,6 +20,25 @@ SQLite, PySide6 (Qt6) for the desktop GUI. CLI designed for n8n consumption.
 `main.py`, `scraper/monitor.py`, `publisher/auto_publisher.py`, `publisher/graph_api_client.py`, `database/repository.py`, `config/settings.py`, `ui/app.py`
 
 ## Active work
+
+**Comment auto-reply pipeline (July 2026):** `--reply` fetches comments on the
+destination account's recent posts (Graph API, no scraping), classifies them
+(rule-based, zero cost — `publisher/reply_drafter.py`), and answers them with
+short templated replies via `POST /{comment-id}/replies`. Crisis language,
+real questions, and accusations are **flagged for a human** (GUI Comments
+page), spam/hostility is skipped. State lives in the new `comments` table
+(UNIQUE ig_comment_id = double-reply impossible). `reply_dry_run` defaults ON:
+drafts are stored but nothing posts until the GitHub repo *variable*
+`REPLY_DRY_RUN=false` is set (or config.json flipped). Caps:
+`max_replies_per_cycle`=10, `max_replies_per_day`=40. Verified end-to-end
+against a mocked Graph API (46 checks) and a real dry-run (2 real comments
+fetched + drafted). NOTE: with the current token the comment `username` field
+comes back None, so self-comment/already-replied detection can't work until
+the token is regenerated with `instagram_manage_comments` (blocked on a Meta
+account security lock as of 2026-07-04; regen steps are in the chat log —
+Business Settings → System users → Post Automation Bot → Generate token with
+the 6 scopes, expiration Never).
+
 Auto-publish pipeline added: `--daemon` (and the GitHub Actions workflow) now
 runs check → prepare → **publish** every cycle, with no manual review step —
 this is a deliberate change from the original design (see git history), made
@@ -57,6 +79,8 @@ uses Segoe UI.
 
 ## External services
 - Instagram (via Instaloader) — anonymous works for public profiles; `instagram_username`/`instagram_password` in config.json enables login + session reuse.
+- Camoufox anti-detect browser — installed via `pip install camoufox[geoip]`; the ~530MB Firefox binary is downloaded once per machine with `python -m camoufox fetch` (lives in the OS per-user cache, NOT in the repo/venv, so CI must run `camoufox fetch` in its setup step). Wrapped by `scraper/browser.py::stealth_browser()`. Not yet wired into `monitor.py` — it's an available fallback path, not the default scraper. Proven (2026-07-06) to anonymously render Instagram profile pages (with real post links) through the residential proxy, when Instaloader's anonymous GraphQL API was blocked outright.
+- DataImpulse residential proxy (`scraper_proxy_url`) — MUST use a **sticky** port (10000-20000), not the rotating default (823/824): rotating hands a fresh exit IP every request, which both looks like a bot and breaks Camoufox's geoip-matched fingerprint. MUST also pin a country with `__cr.<2-letter-code>` appended to the username (e.g. `login__cr.in:pass@gw.dataimpulse.com:10000`) — letting the exit country jump randomly between logins (observed: India → Spain → Congo across three sticky sessions) triggers Instagram's suspicious-login/"please wait a few minutes" soft-block on an account that's logging in from a wildly different geography than its history. Pinned to `in` (India) here to match this project's/account's actual origin.
 - Tesseract OCR — local binary, path configurable (`tesseract_path` in config.json).
 - Instagram Graph API (destination account auto-publish) — `ig_dest_access_token`/`ig_dest_business_account_id` in config.json; needs a Business/Creator destination account + Meta Developer App.
 - n8n — calls `python main.py --check` / `--prepare` / `--publish` / `--status` via Execute Command, parses the JSON on stdout.
