@@ -8,6 +8,7 @@
   "log_level": "INFO",
   "instagram_username": "",
   "instagram_password": "",
+  "scraper_proxy_url": "",
   "ig_dest_access_token": "",
   "ig_dest_business_account_id": "",
   "media_public_base_url": "",

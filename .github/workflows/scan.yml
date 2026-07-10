@@ -72,17 +72,11 @@ jobs:
           MEDIA_PUBLIC_BASE_URL: ${{ secrets.MEDIA_PUBLIC_BASE_URL }}
         run: python main.py --publish
 
-      - name: Run reply (answer comments on the destination account)
-        # Dry-run by default: drafts replies into the DB without posting.
-        # To go live, create a repository *variable* (Settings -> Secrets and
-        # variables -> Actions -> Variables) named REPLY_DRY_RUN with value false.
-        env:
-          IG_DEST_ACCESS_TOKEN: ${{ secrets.IG_DEST_ACCESS_TOKEN }}
-          IG_DEST_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_DEST_BUSINESS_ACCOUNT_ID }}
-          REPLY_DRY_RUN: ${{ vars.REPLY_DRY_RUN }}
-        run: python main.py --reply
+      # Comment auto-reply (--reply) is a separate, not-yet-shipped pipeline
+      # (still uncommitted locally as of 2026-07-10) -- deliberately not wired
+      # in here yet. Add it back once it's been live-tested on its own.
 
-      - name: Commit updated publish/reply status
+      - name: Commit updated publish status
         run: |
           git add database/app.db
           git diff --staged --quiet || git commit -m "Automated publish: $(date -u +'%Y-%m-%d %H:%M UTC')"

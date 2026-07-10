@@ -16,6 +16,7 @@ _ENV_OVERRIDES = {
     "ig_dest_access_token": "IG_DEST_ACCESS_TOKEN",
     "ig_dest_business_account_id": "IG_DEST_BUSINESS_ACCOUNT_ID",
     "media_public_base_url": "MEDIA_PUBLIC_BASE_URL",
+    "scraper_proxy_url": "SCRAPER_PROXY_URL",
 }
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -36,6 +37,10 @@ class Settings:
     log_level: str = "INFO"
     instagram_username: str = ""
     instagram_password: str = ""
+    # Full proxy URL incl. credentials, e.g. http://user:pass@host:port — routes
+    # scraping through a residential proxy so datacenter IPs (GitHub Actions
+    # runners) aren't what Instagram sees. Used for both http:// and https:// traffic.
+    scraper_proxy_url: str = ""
 
     # Destination-account auto-publish (Instagram Graph API).
     ig_dest_access_token: str = ""
