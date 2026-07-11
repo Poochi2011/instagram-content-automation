@@ -38,7 +38,7 @@ goto menu
 
 :actions
 echo.
-echo Checking the automated scan that runs every hour on GitHub...
+echo Checking the automated scan that runs every 3 hours on GitHub...
 echo (This is the part that runs on its own, without your computer.)
 echo.
 
@@ -54,14 +54,15 @@ if "%LATEST_RUN%"=="" (
 
 echo Most recent automated run: %LATEST_RUN%
 echo.
-powershell -NoProfile -Command "$s = gh run view %LATEST_RUN% --log | Select-String 'Check complete'; if ($s) { $s.Line -replace '.*Check complete', 'Scrape result -> Check complete' } else { 'Scrape result -> not found (run may still be in progress)' }"
+powershell -NoProfile -Command "$s = gh run view %LATEST_RUN% --log | Select-String 'accounts checked, \d+ new posts'; if ($s) { 'Scrape result -> ' + ($s.Line -replace '.*\| ', '') } else { 'Scrape result -> not found (run may still be in progress)' }"
 powershell -NoProfile -Command "$s = gh run view %LATEST_RUN% --log | Select-String '\"published\":'; if ($s) { 'Publish result -> ' + ($s.Line -replace '.*\"published\": (\d+).*', '$1 post(s) published this run') } else { 'Publish result -> not found (run may still be in progress)' }"
 echo.
 echo Last 5 automated runs (success/failure, how long ago):
 gh run list --workflow=scan.yml --limit 5
 echo.
-echo Tip: if "new posts" is 0 for several runs in a row, scraping may be
-echo stuck (e.g. Instagram temporarily blocking it) - open option 4 for
+echo Tip: it collects recent posts (not just brand new ones) and skips
+echo anything already downloaded, so "0 new posts" for a run or two is
+echo normal. If it stays at 0 for many runs in a row, open option 4 for
 echo the full details, or ask Claude to look into it.
 echo.
 pause

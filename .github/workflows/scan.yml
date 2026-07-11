@@ -42,15 +42,25 @@ jobs:
       - name: Fetch Camoufox browser binary (no-op if cache hit)
         run: python -m camoufox fetch
 
-      - name: Run check (scrape new posts)
+      - name: Run check (scrape recent posts)
         env:
           # Scraping is anonymous (Camoufox renders real logged-out browser
           # pages) -- no Instagram login/session needed. Routes through a
           # residential proxy since GitHub's shared runner IPs get flagged by
           # Instagram at the request level regardless of auth.
+          #
+          # Uses --backfill, not --check: --check only looks at each account's
+          # single latest post, so a cycle that finds nothing "new" there adds
+          # nothing to the queue even if the account posted multiple times
+          # since our last successful scrape (proxy reliability means cycles
+          # can silently miss accounts -- see CONTEXT.md 2026-07-11).
+          # --backfill inspects the last few posts per account and skips
+          # anything already in the database (posts.shortcode is UNIQUE), so
+          # it never re-downloads or re-publishes the same post twice, but
+          # still picks up anything recent that an earlier cycle missed.
           SCRAPER_PROXY_URL: ${{ secrets.SCRAPER_PROXY_URL }}
           TESSERACT_PATH: /usr/bin/tesseract
-        run: python main.py --check
+        run: python main.py --backfill --backfill-count 3
 
       - name: Run prepare (OCR + caption prep)
         env:
