@@ -2,6 +2,8 @@
 
 Usage:
     python main.py --check     Run one monitoring pass (scrape + download new posts)
+    python main.py --backfill  Fetch each account's recent post history in one pass
+                                (--backfill-count N, default 10, posts per account)
     python main.py --prepare   Run OCR + caption generation on downloaded posts
     python main.py --publish   Publish due 'ready' posts to the destination IG account
     python main.py --status    Print a dashboard-style summary
@@ -27,7 +29,7 @@ from database.db import Database
 from database.repository import AccountRepository, ErrorRepository, PostMediaRepository, PostRepository
 from publisher.auto_publisher import publish_due_posts
 from publisher.queue_manager import prepare_pending_posts
-from scraper.monitor import run_check
+from scraper.monitor import run_backfill, run_check
 from utils.logger import get_logger, setup_logging
 
 logger = get_logger(__name__)
@@ -39,6 +41,16 @@ def cmd_check() -> dict:
     db.initialize_schema()
     try:
         return run_check(settings, db)
+    finally:
+        db.close()
+
+
+def cmd_backfill(max_posts_per_account: int) -> dict:
+    settings = load_settings()
+    db = Database(settings.database_file_path)
+    db.initialize_schema()
+    try:
+        return run_backfill(settings, db, max_posts_per_account)
     finally:
         db.close()
 
@@ -149,6 +161,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Instagram Content Automation")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--check", action="store_true", help="Scan monitored accounts for new posts")
+    group.add_argument(
+        "--backfill", action="store_true",
+        help="Fetch recent post history per account (not just the latest) to seed the queue in one pass",
+    )
+    parser.add_argument(
+        "--backfill-count", type=int, default=10,
+        help="Posts per account to fetch with --backfill (default 10)",
+    )
     group.add_argument("--prepare", action="store_true", help="Run OCR + caption prep on the queue")
     group.add_argument(
         "--publish", action="store_true", help="Publish due 'ready' posts to the destination IG account"
@@ -177,6 +197,8 @@ def main() -> int:
     try:
         if args.check:
             output = cmd_check()
+        elif args.backfill:
+            output = cmd_backfill(args.backfill_count)
         elif args.prepare:
             output = cmd_prepare()
         elif args.publish:
