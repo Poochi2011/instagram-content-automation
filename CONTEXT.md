@@ -88,9 +88,13 @@ independent; a value in one does not imply the other has it.
 
 **Auto-publish pipeline:** the GitHub Actions workflow runs check → prepare →
 publish every cycle, no manual review step — deliberate, since the monitored
-accounts (`accounts.txt`) have authorized republishing. `max_publish_per_day`=10,
-`max_publish_per_cycle`=1 — with the hourly cron this naturally drips
-publishes across the day rather than bursting. Retry state
+accounts (`accounts.txt`) have authorized republishing. `max_publish_per_day`=16,
+`max_publish_per_cycle`=2 (raised 2026-07-11 from 10/1 — the 3-hourly cron ×
+1/cycle capped real throughput at ~8/day even though there was a healthy
+ready-queue backlog; publishing is a separate risk surface from scraping,
+routed through the official Graph API rather than the proxy/Camoufox path,
+so raising this cap doesn't add scraping-error risk. Kept well under
+Instagram's own ~25 posts/24h Graph API content-publishing limit). Retry state
 (`publish_attempts`, `next_publish_attempt_at`, `last_publish_error`) lives on
 the `posts` row in SQLite, not in memory, so a restart resumes backoff where
 it left off. **Verified live end-to-end 2026-07-10**: scraped, downloaded,

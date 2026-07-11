@@ -70,7 +70,7 @@ Tesseract OCR must be installed separately (default path:
      works if the repo is **public** (Graph API can't authenticate to fetch
      from a private repo). If you want to keep the repo private, point this
      at your own CDN/object storage instead.
-   - `max_publish_per_day` (default 10), `max_publish_per_cycle` (default 1),
+   - `max_publish_per_day` (default 16), `max_publish_per_cycle` (default 2),
      `publish_retry_max_attempts` (default 5), `publish_retry_backoff_minutes`
      (default 15, doubles each retry).
 
@@ -143,10 +143,11 @@ worth knowing going in):
 - To change how often it runs, edit the `cron:` line in
   `.github/workflows/scan.yml` (this controls cloud frequency — the
   `polling_interval_minutes` setting only affects local `--daemon` runs).
-- Auto-publish is capped at `max_publish_per_day` (default 10) and
-  `max_publish_per_cycle` (default 1, i.e. one new post goes out per run) —
-  raise these in Settings/config.json if hourly + 1/cycle is too slow to drain
-  a backlog.
+- Auto-publish is capped at `max_publish_per_day` (default 16) and
+  `max_publish_per_cycle` (default 2, i.e. up to two new posts go out per run) —
+  raise these in Settings/config.json if that's still too slow to drain
+  a backlog. Keep `max_publish_per_day` comfortably under Instagram's own
+  Graph API content-publishing limit (25 posts/24h per account).
 - Scraping via Instaloader and posting via the Graph API are still two
   separate risk surfaces: scraping is against Instagram's unofficial web
   interface regardless of any agreement with the source accounts, and the

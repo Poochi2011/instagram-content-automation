@@ -48,8 +48,8 @@ class Settings:
     # Repo root, not the downloads folder — the relative path (e.g. downloads/x.jpg)
     # is computed from PROJECT_ROOT and appended, so this should NOT end in /downloads.
     media_public_base_url: str = ""  # e.g. https://raw.githubusercontent.com/<user>/<repo>/main
-    max_publish_per_cycle: int = 1
-    max_publish_per_day: int = 10
+    max_publish_per_cycle: int = 2
+    max_publish_per_day: int = 16
     publish_retry_max_attempts: int = 5
     publish_retry_backoff_minutes: int = 15
 
