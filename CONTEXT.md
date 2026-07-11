@@ -20,28 +20,48 @@ the desktop GUI. CLI designed for n8n consumption.
 
 ## Active work
 
-**Camoufox is the default scraper (wired 2026-07-10), but is CURRENTLY BLOCKED
-as of 2026-07-11 — read this before assuming it works.** Anonymous Camoufox
-scraping was proven working repeatedly on 2026-07-10 (real posts/images/
-captions fetched and one real post published to `@activate.you`, media id
-`18328443421282776`). Every GitHub Actions run since has hit a login wall or
-timeout on all 11 accounts, including naturally-spaced hourly runs across
-~10 hours (not a burst/pacing issue — added a 3-7s inter-account stagger,
-didn't help). Re-tested locally on 2026-07-11 (same machine, same code, that
-worked hours earlier) and it **also now times out** — this rules out a
-Linux-CI-specific fingerprint problem; the block is proxy/IP-pool-wide, not
-environment-specific. Most likely explanation: cumulative heavy request
-volume through the same DataImpulse sticky-proxy identity over one day
-(extensive manual testing 2026-07-10 + ~10 hours of hourly CI runs) got that
-IP pool broadly flagged by Instagram. Unresolved as of this writing — next
-steps to try: wait longer and re-test, request a fresh session/pool from
-DataImpulse, or evaluate a different residential proxy provider if this
-doesn't clear.
+**Camoufox is the default scraper (wired 2026-07-10). The "every account
+returns 0 new posts" problem hit 2026-07-10/11 is RESOLVED as of 2026-07-11
+— root cause was NOT a hard Instagram block in most cases.** Real chain of
+events: `check`/`backfill` kept returning 0 new posts across ~10 hours of
+naturally-spaced CI runs and local re-tests, with mixed "redirected to a
+login wall" and plain timeout errors. A stagger delay (3-7s between accounts)
+didn't help, which pointed away from burst/pacing as the cause. Root-caused
+by dumping the actual rendered page: `domcontentloaded` fires on Instagram's
+essentially-empty page shell; the real JS bundle takes a long time to
+download and execute over this residential proxy's slow, variable connection
+(observed browser launches alone taking 20-122 seconds, and full hydration
+needing 30+ seconds on top of that). The old fixed 2.5-4s post-navigation
+sleep never came close, so the code was reading an unhydrated, content-free
+page and correctly reporting "0 posts found" every single time — it was
+telling the truth about what it saw, the code just wasn't waiting long
+enough to see the real page. Fixed by replacing the fixed sleep with
+`page.wait_for_selector`/`wait_for_function` polling (up to 45s) in
+`scraper/camoufox_client.py`, which returns as soon as content is actually
+ready rather than guessing a fixed delay. Verified against a real account
+post-fix: fetched a genuinely new, previously-unseen post end to end.
+
+The *other* symptom seen alongside this — some accounts explicitly
+"redirected to a login wall" rather than just timing out — is a real,
+separate risk (one proxy identity absorbing too much cumulative traffic can
+still get flagged) and is mitigated, not just diagnosed away, by:
+- `scraper/proxy_rotation.py`: builds DataImpulse `sessid`-based proxy URLs
+  so different account groups (and retries) get genuinely different
+  residential IPs, instead of one identity carrying an entire run.
+- `scraper/monitor.py`: accounts are split into groups of 3
+  (`_ACCOUNT_GROUP_SIZE`), each with its own identity (`sessid` stable per
+  calendar day + group index, so it looks like one recurring visitor across
+  a day rather than rotating every single request — per-request rotation is
+  itself a bot signal per DataImpulse's own guidance — but is guaranteed
+  fresh the next day). If a group's first account fails, the whole group
+  gets one retry under a brand new, never-used sessid.
+- `.github/workflows/scan.yml`: cron dropped from hourly to every 3 hours,
+  cutting total daily request volume roughly 3x.
 
 Instaloader's anonymous access is separately blocked outright (private-API
 calls get a 403), proxy or not — confirmed by testing, corroborated by
 Instaloader's own docs and a live 2026 upstream issue, unrelated to the
-Camoufox proxy-pool issue above. The login-based fallback (account
+Camoufox timing issue above. The login-based fallback (account
 `voidvessel85`) also hit a soft "please wait a few minutes" lock on first
 live login attempt and didn't clear after a retry, so it's not currently
 usable either. `scraper/camoufox_client.py`'s `CamoufoxInstagramClient`
@@ -50,19 +70,21 @@ mirrors `InstagramClient`'s interface and is what `scraper/monitor.py` uses.
 single representative image only** — multi-slide extraction from the embed
 page's DOM wasn't solved, so `is_carousel` is always `False` on posts from
 this client. `instagram_client.py` (Instaloader) is kept in the codebase,
-unused, in case the login path recovers
-later.
+unused, in case the login path recovers later.
 
-**Proxy setup (DataImpulse residential):** `scraper_proxy_url` MUST use a
-**sticky** port (10000-20000), not the rotating default (823/824) — rotating
-hands a fresh exit IP every request, which both looks like a bot and breaks
-Camoufox's geoip-matched fingerprint. MUST also pin a country with
-`__cr.<code>` appended to the username (e.g. `login__cr.in:pass@gw.dataimpulse.com:10000`)
+**Proxy setup (DataImpulse residential):** as of 2026-07-11, `scraper_proxy_url`
+uses the **rotating** port (823), NOT the sticky port range (10000-20000) —
+superseded by explicit `sessid` control (see `scraper/proxy_rotation.py`
+above), which per DataImpulse's docs requires the rotating port. (Earlier
+guidance in this file said to use the sticky port range instead; that's now
+wrong — don't follow it.) Country is still pinned with `__cr.<code>`
+appended to the username (e.g. `login__cr.in;sessid.X:pass@gw.dataimpulse.com:823`)
 — an exit country that jumps randomly between sessions (observed: India →
-Spain → Congo) is itself a bot signal. Pinned to `in` to match this project's
-actual origin. This exact value must be set as **both** the local
-`config.json` value AND the GitHub Actions repo secret `SCRAPER_PROXY_URL` —
-they are independent; a value in one does not imply the other has it.
+Spain → Congo) is itself a bot signal; pinned to `in` to match this
+project's actual origin. This exact base value (without a `sessid` — that's
+added dynamically per group) must be set as **both** the local `config.json`
+value AND the GitHub Actions repo secret `SCRAPER_PROXY_URL` — they are
+independent; a value in one does not imply the other has it.
 
 **Auto-publish pipeline:** the GitHub Actions workflow runs check → prepare →
 publish every cycle, no manual review step — deliberate, since the monitored
