@@ -20,20 +20,37 @@ the desktop GUI. CLI designed for n8n consumption.
 
 ## Active work
 
-**Camoufox is now the default scraper (2026-07-10).** Instagram now blocks
-anonymous GraphQL access outright (Instaloader's private-API calls), proxy or
-not — confirmed by testing, corroborated by Instaloader's own docs and a live
-2026 upstream issue. The login-based fallback (account `voidvessel85`) also
-hit a soft "please wait a few minutes" lock on first live login attempt and
-didn't clear after a retry, so it's not currently usable either. Camoufox
-renders real anonymous browser pages instead (same access a logged-out human
-visitor gets, not subject to that block) — `scraper/camoufox_client.py`'s
-`CamoufoxInstagramClient` mirrors `InstagramClient`'s interface and is what
-`scraper/monitor.py` now uses. **Known regression vs. the old Instaloader
-path: carousels are captured as a single representative image only** —
-multi-slide extraction from the embed page's DOM wasn't solved, so
-`is_carousel` is always `False` on posts from this client. `instagram_client.py`
-(Instaloader) is kept in the codebase, unused, in case the login path recovers
+**Camoufox is the default scraper (wired 2026-07-10), but is CURRENTLY BLOCKED
+as of 2026-07-11 — read this before assuming it works.** Anonymous Camoufox
+scraping was proven working repeatedly on 2026-07-10 (real posts/images/
+captions fetched and one real post published to `@activate.you`, media id
+`18328443421282776`). Every GitHub Actions run since has hit a login wall or
+timeout on all 11 accounts, including naturally-spaced hourly runs across
+~10 hours (not a burst/pacing issue — added a 3-7s inter-account stagger,
+didn't help). Re-tested locally on 2026-07-11 (same machine, same code, that
+worked hours earlier) and it **also now times out** — this rules out a
+Linux-CI-specific fingerprint problem; the block is proxy/IP-pool-wide, not
+environment-specific. Most likely explanation: cumulative heavy request
+volume through the same DataImpulse sticky-proxy identity over one day
+(extensive manual testing 2026-07-10 + ~10 hours of hourly CI runs) got that
+IP pool broadly flagged by Instagram. Unresolved as of this writing — next
+steps to try: wait longer and re-test, request a fresh session/pool from
+DataImpulse, or evaluate a different residential proxy provider if this
+doesn't clear.
+
+Instaloader's anonymous access is separately blocked outright (private-API
+calls get a 403), proxy or not — confirmed by testing, corroborated by
+Instaloader's own docs and a live 2026 upstream issue, unrelated to the
+Camoufox proxy-pool issue above. The login-based fallback (account
+`voidvessel85`) also hit a soft "please wait a few minutes" lock on first
+live login attempt and didn't clear after a retry, so it's not currently
+usable either. `scraper/camoufox_client.py`'s `CamoufoxInstagramClient`
+mirrors `InstagramClient`'s interface and is what `scraper/monitor.py` uses.
+**Known regression vs. the old Instaloader path: carousels are captured as a
+single representative image only** — multi-slide extraction from the embed
+page's DOM wasn't solved, so `is_carousel` is always `False` on posts from
+this client. `instagram_client.py` (Instaloader) is kept in the codebase,
+unused, in case the login path recovers
 later.
 
 **Proxy setup (DataImpulse residential):** `scraper_proxy_url` MUST use a
