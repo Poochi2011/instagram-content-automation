@@ -168,12 +168,23 @@ class CamoufoxInstagramClient:
             logger.warning("No image found for post %s (@%s); skipping.", shortcode, username)
             return None
 
+        # .Caption's own innerText also includes its .CaptionUsername and
+        # .CaptionComments/.CaptionCommentsExpand children ("username" prefix
+        # and a "View all N comments" link, in whatever language the session's
+        # locale happens to be -- observed Hindi/Bengali/Telugu variants
+        # bleeding into stored captions). Strip those elements from a clone
+        # before reading innerText instead of guessing at fixed newline
+        # positions or matching specific translated strings.
+        clean_caption_js = (
+            "el => { const c = el.cloneNode(true); "
+            "c.querySelectorAll('.CaptionUsername, .CaptionComments, .CaptionCommentsExpand')"
+            ".forEach(n => n.remove()); return c.innerText; }"
+        )
         try:
-            raw_caption = self._page.eval_on_selector(".Caption", "el => el.innerText") or ""
+            raw_caption = self._page.eval_on_selector(".Caption", clean_caption_js) or ""
         except Exception:
             raw_caption = ""
-        lines = raw_caption.split("\n", 2)
-        caption = lines[2].strip() if len(lines) > 2 else (raw_caption.strip() or None)
+        caption = raw_caption.strip() or None
 
         time_els = self._page.eval_on_selector_all("time", "els => els.map(e => e.getAttribute('datetime'))")
         posted_at = time_els[0] if time_els else None
