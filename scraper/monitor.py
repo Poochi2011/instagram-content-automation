@@ -16,6 +16,7 @@ from database.db import Database
 from database.repository import AccountRepository, ErrorRepository, PostMediaRepository, PostRepository
 from scraper.camoufox_client import CamoufoxInstagramClient
 from scraper.instagram_client import PostData
+from scraper.proxy_rotation import chunk, daily_group_session_id, with_session_id
 from utils.exceptions import ScraperError
 from utils.logger import get_logger
 from utils.paths import account_download_dir
@@ -202,11 +203,70 @@ def _stagger() -> None:
     """Sleep a few seconds between per-account requests through the same browser
     session. A tight back-to-back burst across many accounts (no gap at all) is a
     much more bot-like request pattern than a human browsing session ever produces,
-    even routed through a good residential IP -- observed this trip Instagram's
-    login wall on every account in one run (2026-07-10) despite proven success on
-    the same code/proxy minutes earlier with more naturally spaced-out requests.
+    even routed through a good residential IP.
     """
     time.sleep(random.uniform(3.0, 7.0))
+
+
+# Accounts per proxy identity per run. Keeps any single residential IP's
+# footprint small (a real person doesn't visit 11 different profiles back to
+# back), and means one bad/blocked identity only costs a few accounts, not
+# the whole run -- see CONTEXT.md (2026-07-11) for why this replaced one
+# shared session for all accounts.
+_ACCOUNT_GROUP_SIZE = 3
+_MAX_IDENTITY_RETRIES = 1
+
+
+def _run_grouped(accounts: list, settings: Settings, error_repo: ErrorRepository, per_account) -> list[dict]:
+    """Run per_account(username, client) -> dict across all accounts, split into
+    small groups that each get their own DataImpulse proxy identity (sessid).
+
+    If the first account tried in a group fails with a ScraperError (login
+    wall, timeout, or the browser session itself failing to start), that
+    identity is considered bad and the whole group is retried once, fresh,
+    under a brand new sessid -- cheap insurance against a single unlucky/
+    flagged/slow residential IP taking out a chunk of a run.
+    """
+    results: list[dict] = []
+    for group_index, group in enumerate(chunk(accounts, _ACCOUNT_GROUP_SIZE)):
+        group_results: list[dict] = []
+        for retry in range(_MAX_IDENTITY_RETRIES + 1):
+            session_id = daily_group_session_id(group_index, retry)
+            proxy_url = with_session_id(settings.scraper_proxy_url, session_id)
+            group_results = []
+            identity_failed = False
+            try:
+                with CamoufoxInstagramClient(proxy_url) as client:
+                    for i, acc in enumerate(group):
+                        if i > 0:
+                            _stagger()
+                        result = per_account(acc.username, client)
+                        group_results.append(result)
+                        if i == 0 and result.get("error"):
+                            identity_failed = True
+                            break
+            except ScraperError as exc:
+                logger.warning("Group %d, session %s: browser session failed: %s", group_index, session_id, exc)
+                identity_failed = True
+
+            if not identity_failed or retry == _MAX_IDENTITY_RETRIES:
+                break
+            logger.info("Group %d: identity %s looked bad, retrying group with a fresh one.", group_index, session_id)
+
+        if identity_failed and not group_results:
+            for acc in group:
+                error_repo.log("scraper", "Proxy identity failed after retry", acc.username)
+                group_results.append({"username": acc.username, "new_post": False, "new_posts": 0, "error": "proxy identity failed"})
+
+        # Any accounts in the group not yet attempted (identity failed after the
+        # canary but we gave up retrying) still need a result entry.
+        attempted = {r["username"] for r in group_results}
+        for acc in group:
+            if acc.username not in attempted:
+                group_results.append({"username": acc.username, "new_post": False, "new_posts": 0, "error": "skipped after identity failure"})
+
+        results.extend(group_results)
+    return results
 
 
 def run_check(settings: Settings, db: Database) -> dict:
@@ -219,21 +279,12 @@ def run_check(settings: Settings, db: Database) -> dict:
     bootstrap_accounts_if_empty(settings, account_repo)
     accounts = account_repo.list_all(active_only=True)
 
-    try:
-        with CamoufoxInstagramClient(settings.scraper_proxy_url) as client:
-            results = []
-            for i, acc in enumerate(accounts):
-                if i > 0:
-                    _stagger()
-                results.append(
-                    check_account(acc.username, settings, client, account_repo, post_repo, post_media_repo, error_repo)
-                )
-    except ScraperError as exc:
-        logger.error("Scraper session failed to start: %s", exc)
-        error_repo.log("scraper", str(exc))
-        return {"checked": 0, "new_posts": 0, "results": [], "login_error": str(exc)}
+    def per_account(username: str, client: CamoufoxInstagramClient) -> dict:
+        return check_account(username, settings, client, account_repo, post_repo, post_media_repo, error_repo)
 
-    new_posts = sum(1 for r in results if r["new_post"])
+    results = _run_grouped(accounts, settings, error_repo, per_account)
+
+    new_posts = sum(1 for r in results if r.get("new_post"))
     logger.info("Check complete: %d accounts checked, %d new posts", len(results), new_posts)
     return {"checked": len(results), "new_posts": new_posts, "results": results, "login_error": None}
 
@@ -252,23 +303,13 @@ def run_backfill(settings: Settings, db: Database, max_posts_per_account: int) -
     bootstrap_accounts_if_empty(settings, account_repo)
     accounts = account_repo.list_all(active_only=True)
 
-    try:
-        with CamoufoxInstagramClient(settings.scraper_proxy_url) as client:
-            results = []
-            for i, acc in enumerate(accounts):
-                if i > 0:
-                    _stagger()
-                results.append(
-                    backfill_account(
-                        acc.username, settings, client, account_repo, post_repo, post_media_repo, error_repo,
-                        max_posts_per_account,
-                    )
-                )
-    except ScraperError as exc:
-        logger.error("Scraper session failed to start: %s", exc)
-        error_repo.log("scraper", str(exc))
-        return {"checked": 0, "new_posts": 0, "results": [], "login_error": str(exc)}
+    def per_account(username: str, client: CamoufoxInstagramClient) -> dict:
+        return backfill_account(
+            username, settings, client, account_repo, post_repo, post_media_repo, error_repo, max_posts_per_account,
+        )
 
-    new_posts = sum(r["new_posts"] for r in results)
+    results = _run_grouped(accounts, settings, error_repo, per_account)
+
+    new_posts = sum(r.get("new_posts", 0) for r in results)
     logger.info("Backfill complete: %d accounts checked, %d new posts", len(results), new_posts)
     return {"checked": len(results), "new_posts": new_posts, "results": results, "login_error": None}

@@ -2,7 +2,11 @@ name: Instagram scan
 
 on:
   schedule:
-    - cron: "0 * * * *" # hourly — edit this to change polling frequency
+    # Every 3 hours, not hourly -- hourly meant 11 accounts x 24 checks/day
+    # through one proxy identity, which correlated with every account hitting
+    # a login wall (see CONTEXT.md, 2026-07-11). Lower volume + per-group
+    # identity rotation (scraper/proxy_rotation.py) are the mitigation.
+    - cron: "0 */3 * * *"
   workflow_dispatch: {} # adds a "Run workflow" button in the Actions tab
 
 permissions:

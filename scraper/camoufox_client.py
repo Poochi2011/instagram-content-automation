@@ -3,10 +3,16 @@ instead of hitting Instagram's private GraphQL API directly.
 
 Instagram now blocks anonymous GraphQL access outright, regardless of IP
 reputation (proxy or not) -- see CONTEXT.md. A real, anonymous browser session
-loading instagram.com's actual pages is not subject to that block, since it's
-the same access logged-out human visitors get. This is the default scraper
-as of 2026-07; scraper/instagram_client.py (Instaloader) is kept for a
-possible future login-based path but is not currently used by monitor.py.
+loading instagram.com's actual pages is not subject to that specific block,
+since it's the same access logged-out human visitors get. This is the
+default scraper as of 2026-07; scraper/instagram_client.py (Instaloader) is
+kept for a possible future login-based path but is not currently used by
+monitor.py.
+
+Separately, the residential proxy identity itself can still get login-walled
+or become unreliable (slow/flaky) from cumulative traffic -- see
+scraper/proxy_rotation.py and monitor.py's grouped-session-with-retry logic,
+added after this was observed 2026-07-11.
 
 Known limitation vs the Instaloader path: carousel posts are only captured as
 a single representative image (the first slide). Reliably detecting and
@@ -32,9 +38,15 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_PROFILE_TIMEOUT_MS = 45000
-_POST_TIMEOUT_MS = 30000
-_RENDER_WAIT_MS = 2500
+_PROFILE_TIMEOUT_MS = 75000
+_POST_TIMEOUT_MS = 60000
+# How long to poll for real content to hydrate before giving up. domcontentloaded
+# fires on Instagram's initial empty shell, well before its JS bundle finishes
+# downloading and rendering over a slow residential proxy connection -- observed
+# needing 30+ seconds in practice (2026-07-11), far more than a fixed short sleep
+# ever covered. Polling (wait_for_selector/wait_for_function) returns as soon as
+# content appears, so a fast connection isn't penalized by this generous ceiling.
+_HYDRATION_TIMEOUT_MS = 45000
 
 
 class CamoufoxInstagramClient:
@@ -99,10 +111,22 @@ class CamoufoxInstagramClient:
             )
         except Exception as exc:
             raise ScraperError(f"Failed to load profile @{username}: {exc}") from exc
-        self._page.wait_for_timeout(_RENDER_WAIT_MS)
 
         if "/accounts/login" in self._page.url:
             raise ScraperError(f"Profile @{username} redirected to a login wall.")
+
+        try:
+            self._page.wait_for_selector("a[href*='/p/']", timeout=_HYDRATION_TIMEOUT_MS)
+        except Exception:
+            # Could be a genuinely empty/private profile, or hydration that never
+            # finished. A login redirect can also happen mid-hydration, not just
+            # on the initial navigation, so re-check it here too.
+            if "/accounts/login" in self._page.url:
+                raise ScraperError(f"Profile @{username} redirected to a login wall.")
+            logger.warning(
+                "No post links appeared for @%s within %dms; profile may be empty, or the page never finished loading.",
+                username, _HYDRATION_TIMEOUT_MS,
+            )
 
         links = self._page.eval_on_selector_all("a[href*='/p/']", "els => els.map(e => e.href)")
         shortcodes: list[str] = []
@@ -121,7 +145,18 @@ class CamoufoxInstagramClient:
     def _fetch_post(self, username: str, shortcode: str) -> Optional[PostData]:
         url = f"https://www.instagram.com/p/{shortcode}/embed/captioned"
         self._page.goto(url, timeout=_POST_TIMEOUT_MS, wait_until="domcontentloaded")
-        self._page.wait_for_timeout(_RENDER_WAIT_MS)
+
+        real_image_js = (
+            "() => Array.from(document.querySelectorAll('img')).some(e => "
+            "(e.src.includes('cdninstagram') || e.src.includes('fbcdn')) "
+            "&& !e.src.includes('s100x100') && !e.src.includes('s150x150') && !e.src.includes('profile_pic'))"
+        )
+        try:
+            self._page.wait_for_function(real_image_js, timeout=_HYDRATION_TIMEOUT_MS)
+        except Exception:
+            logger.warning(
+                "Post %s (@%s) didn't render a real image within %dms.", shortcode, username, _HYDRATION_TIMEOUT_MS,
+            )
 
         images = self._page.eval_on_selector_all(
             "img",
