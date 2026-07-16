@@ -71,6 +71,72 @@ class GraphAPIClient:
         self._poll_until_finished(parent_id)
         return self._publish_container(parent_id)
 
+    # ---- Comment management (auto-reply pipeline) ----
+
+    def get_account_username(self) -> str:
+        """The destination account's own IG username — used to skip self-comments."""
+        data = self._request(
+            "GET", str(self._business_account_id), {"fields": "username", "access_token": self._access_token}
+        )
+        username = data.get("username")
+        if not username:
+            raise PermanentPublishError(f"Graph API did not return the account username: {data}")
+        return username
+
+    def get_recent_media(self, limit: int = 20) -> list[dict]:
+        """Most recent posts on the destination account, newest first.
+
+        Each dict: id, caption (may be missing), timestamp, comments_count.
+        """
+        data = self._request(
+            "GET",
+            f"{self._business_account_id}/media",
+            {
+                "fields": "id,caption,timestamp,comments_count",
+                "limit": min(limit, 50),
+                "access_token": self._access_token,
+            },
+        )
+        return data.get("data", [])
+
+    def get_comments(self, media_id: str, max_pages: int = 4) -> list[dict]:
+        """Top-level comments on one post (replies to comments are not included
+        as separate items — they arrive nested under 'replies', which is exactly
+        what we need to detect comments that were already answered manually).
+
+        Each dict: id, text, timestamp, username, and optionally
+        replies: {data: [{id, username, text}, ...]}.
+        """
+        comments: list[dict] = []
+        params = {
+            "fields": "id,text,timestamp,username,replies{id,username,text}",
+            "limit": 50,
+            "access_token": self._access_token,
+        }
+        path = f"{media_id}/comments"
+        for _ in range(max_pages):
+            data = self._request("GET", path, params)
+            comments.extend(data.get("data", []))
+            after = data.get("paging", {}).get("cursors", {}).get("after")
+            if not after or not data.get("paging", {}).get("next"):
+                break
+            params = {**params, "after": after}
+        return comments
+
+    def reply_to_comment(self, comment_id: str, message: str) -> str:
+        """Post a threaded reply under a comment. Returns the new reply's comment id."""
+        data = self._request(
+            "POST",
+            f"{comment_id}/replies",
+            {"message": message, "access_token": self._access_token},
+        )
+        reply_id = data.get("id")
+        if not reply_id:
+            raise PermanentPublishError(f"Graph API did not return a reply comment id: {data}")
+        return reply_id
+
+    # ---- Content publishing internals ----
+
     def _create_container(self, params: dict) -> str:
         data = self._request("POST", f"{self._business_account_id}/media", {**params, "access_token": self._access_token})
         container_id = data.get("id")

@@ -98,6 +98,43 @@ class PostMedia:
 
 
 @dataclass
+class Comment:
+    id: Optional[int]
+    ig_comment_id: str
+    ig_media_id: str
+    media_caption: Optional[str]
+    username: Optional[str]
+    text: Optional[str]
+    commented_at: Optional[str]
+    classification: Optional[str]
+    reply_text: Optional[str]
+    status: str
+    reply_ig_comment_id: Optional[str]
+    replied_at: Optional[str]
+    last_error: Optional[str]
+    created_at: str
+
+    @classmethod
+    def from_row(cls, row) -> "Comment":
+        return cls(
+            id=row["id"],
+            ig_comment_id=row["ig_comment_id"],
+            ig_media_id=row["ig_media_id"],
+            media_caption=row["media_caption"],
+            username=row["username"],
+            text=row["text"],
+            commented_at=row["commented_at"],
+            classification=row["classification"],
+            reply_text=row["reply_text"],
+            status=row["status"],
+            reply_ig_comment_id=row["reply_ig_comment_id"],
+            replied_at=row["replied_at"],
+            last_error=row["last_error"],
+            created_at=row["created_at"],
+        )
+
+
+@dataclass
 class ErrorLog:
     id: Optional[int]
     source: str

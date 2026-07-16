@@ -13,7 +13,11 @@
   "ig_dest_business_account_id": "",
   "media_public_base_url": "",
   "max_publish_per_cycle": 2,
-  "max_publish_per_day": 16,
+  "max_publish_per_day": 6,
   "publish_retry_max_attempts": 5,
-  "publish_retry_backoff_minutes": 15
+  "publish_retry_backoff_minutes": 15,
+  "blocked_keywords": [
+    "porn", "sex", "sexual", "nsfw", "nude", "nudes", "nudity", "naked",
+    "xxx", "explicit", "onlyfans", "escort", "fetish", "erotic", "hentai"
+  ]
 }

@@ -13,6 +13,7 @@ from database.models import Post
 from database.repository import AccountRepository, ErrorRepository, PostRepository
 from ocr.extractor import extract_text
 from publisher.caption_builder import build_repost_caption
+from publisher.content_filter import screen_texts
 from utils.exceptions import OCRError
 from utils.logger import get_logger
 
@@ -25,6 +26,7 @@ def prepare_post(
     tesseract_path: str,
     post_repo: PostRepository,
     error_repo: ErrorRepository,
+    blocked_keywords: list[str],
 ) -> bool:
     """Run OCR + build caption for a single downloaded post. Returns True on success."""
     if not post.image_path:
@@ -33,6 +35,15 @@ def prepare_post(
     try:
         text = extract_text(Path(post.image_path), tesseract_path)
         post_repo.mark_ocr_done(post.shortcode, text)
+
+        # Screen caption + OCR'd overlay text for adult/explicit keywords. A hit
+        # rejects the post here so it never becomes 'ready' and never publishes.
+        blocked = screen_texts([post.caption, text], blocked_keywords)
+        if blocked:
+            reason = f"Blocked by content filter: matched '{blocked}'"
+            post_repo.mark_rejected(post.shortcode, reason)
+            logger.info("Rejected post %s — %s", post.shortcode, reason)
+            return False
 
         caption = build_repost_caption(username, post.caption)
         post_repo.mark_ready(post.shortcode, caption)
@@ -49,6 +60,7 @@ def prepare_pending_posts(
     account_repo: AccountRepository,
     error_repo: ErrorRepository,
     tesseract_path: str,
+    blocked_keywords: list[str],
 ) -> int:
     """Run prepare_post() on every post still in 'downloaded' status. Returns count prepared."""
     pending = post_repo.list_by_status("downloaded")
@@ -58,7 +70,9 @@ def prepare_pending_posts(
         account = accounts_by_id.get(post.account_id)
         if account is None:
             continue
-        if prepare_post(post, account.username, tesseract_path, post_repo, error_repo):
+        if prepare_post(
+            post, account.username, tesseract_path, post_repo, error_repo, blocked_keywords
+        ):
             prepared += 1
     return prepared
 

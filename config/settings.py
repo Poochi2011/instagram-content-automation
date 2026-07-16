@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 # Env vars override config.json — lets CI (GitHub Actions secrets) inject credentials
@@ -48,10 +48,26 @@ class Settings:
     # Repo root, not the downloads folder — the relative path (e.g. downloads/x.jpg)
     # is computed from PROJECT_ROOT and appended, so this should NOT end in /downloads.
     media_public_base_url: str = ""  # e.g. https://raw.githubusercontent.com/<user>/<repo>/main
+    # Up to 2 posts per scheduled slot, capped at 6/day across the 6 daytime
+    # slots (see .github/workflows/publish.yml).
     max_publish_per_cycle: int = 2
-    max_publish_per_day: int = 16
+    max_publish_per_day: int = 6
     publish_retry_max_attempts: int = 5
     publish_retry_backoff_minutes: int = 15
+
+    # Posts whose caption or OCR'd overlay text contains any of these whole words
+    # (case-insensitive) are rejected during prepare and never published.
+    # Override in config.json to tune the list.
+    blocked_keywords: list[str] = field(
+        default_factory=lambda: [
+            "porn", "pornographic", "porno", "sex", "sexual", "sexually", "nsfw",
+            "nude", "nudes", "nudity", "naked", "xxx", "explicit", "onlyfans",
+            "escort", "fetish", "erotic", "erotica", "hentai", "camgirl", "milf",
+            "blowjob", "handjob", "masturbate", "masturbation", "orgasm", "bdsm",
+            "cum", "boobs", "tits", "dick", "cock", "pussy", "vagina", "penis",
+            "horny", "slut", "whore", "creampie", "deepthroat", "gangbang",
+        ]
+    )
 
     @property
     def accounts_file_path(self) -> Path:

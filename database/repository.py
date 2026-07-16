@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from database.db import Database
-from database.models import Account, ErrorLog, Post, PostMedia
+from database.models import Account, Comment, ErrorLog, Post, PostMedia
 
 
 class AccountRepository:
@@ -159,6 +159,14 @@ class PostRepository:
         with self._db.cursor() as cur:
             cur.execute("UPDATE posts SET status = 'error' WHERE shortcode = ?", (shortcode,))
 
+    def mark_rejected(self, shortcode: str, reason: str) -> None:
+        """Flag a post as blocked by the content filter so it's never published."""
+        with self._db.cursor() as cur:
+            cur.execute(
+                "UPDATE posts SET status = 'rejected', last_publish_error = ? WHERE shortcode = ?",
+                (reason, shortcode),
+            )
+
     def list_publishable(self, now_iso: str) -> list[Post]:
         """'ready' posts due for a publish attempt now, oldest source post first."""
         rows = self._db.connection.execute(
@@ -238,6 +246,115 @@ class PostMediaRepository:
             "SELECT * FROM post_media WHERE post_id = ? ORDER BY position ASC", (post_id,)
         ).fetchall()
         return [PostMedia.from_row(r) for r in rows]
+
+
+class CommentRepository:
+    """Comments fetched from the destination account's posts + our reply state."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def upsert_fetched(
+        self,
+        ig_comment_id: str,
+        ig_media_id: str,
+        media_caption: Optional[str],
+        username: Optional[str],
+        text: Optional[str],
+        commented_at: Optional[str],
+    ) -> bool:
+        """Insert a newly fetched comment; existing rows are left untouched so
+        reply state is never clobbered by a re-fetch. Returns True if new."""
+        with self._db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO comments (ig_comment_id, ig_media_id, media_caption, username, text, commented_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(ig_comment_id) DO NOTHING",
+                (ig_comment_id, ig_media_id, media_caption, username, text, commented_at),
+            )
+            return cur.rowcount > 0
+
+    def get_by_ig_id(self, ig_comment_id: str) -> Optional[Comment]:
+        row = self._db.connection.execute(
+            "SELECT * FROM comments WHERE ig_comment_id = ?", (ig_comment_id,)
+        ).fetchone()
+        return Comment.from_row(row) if row else None
+
+    def list_by_status(self, status: Optional[str] = None, limit: int = 200) -> list[Comment]:
+        if status:
+            rows = self._db.connection.execute(
+                "SELECT * FROM comments WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = self._db.connection.execute(
+                "SELECT * FROM comments ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [Comment.from_row(r) for r in rows]
+
+    def list_pending(self, limit: int) -> list[Comment]:
+        """Oldest first, so long-waiting comments get answered before fresh ones."""
+        rows = self._db.connection.execute(
+            "SELECT * FROM comments WHERE status IN ('pending', 'drafted') "
+            "ORDER BY created_at ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [Comment.from_row(r) for r in rows]
+
+    def mark_drafted(self, ig_comment_id: str, classification: str, reply_text: str) -> None:
+        with self._db.cursor() as cur:
+            cur.execute(
+                "UPDATE comments SET status = 'drafted', classification = ?, reply_text = ? "
+                "WHERE ig_comment_id = ?",
+                (classification, reply_text, ig_comment_id),
+            )
+
+    def mark_replied(self, ig_comment_id: str, reply_ig_comment_id: str) -> None:
+        with self._db.cursor() as cur:
+            cur.execute(
+                "UPDATE comments SET status = 'replied', reply_ig_comment_id = ?, "
+                "replied_at = datetime('now'), last_error = NULL WHERE ig_comment_id = ?",
+                (reply_ig_comment_id, ig_comment_id),
+            )
+
+    def mark_flagged(self, ig_comment_id: str, classification: str) -> None:
+        with self._db.cursor() as cur:
+            cur.execute(
+                "UPDATE comments SET status = 'flagged', classification = ? WHERE ig_comment_id = ?",
+                (classification, ig_comment_id),
+            )
+
+    def mark_skipped(self, ig_comment_id: str, classification: str) -> None:
+        with self._db.cursor() as cur:
+            cur.execute(
+                "UPDATE comments SET status = 'skipped', classification = ? WHERE ig_comment_id = ?",
+                (classification, ig_comment_id),
+            )
+
+    def record_reply_error(self, ig_comment_id: str, error_message: str, permanent: bool) -> None:
+        """Transient errors keep the row pending/drafted so the next cycle retries it."""
+        with self._db.cursor() as cur:
+            if permanent:
+                cur.execute(
+                    "UPDATE comments SET status = 'error', last_error = ? WHERE ig_comment_id = ?",
+                    (error_message, ig_comment_id),
+                )
+            else:
+                cur.execute(
+                    "UPDATE comments SET last_error = ? WHERE ig_comment_id = ?",
+                    (error_message, ig_comment_id),
+                )
+
+    def count_replied_since(self, since_iso: str) -> int:
+        row = self._db.connection.execute(
+            "SELECT COUNT(*) AS n FROM comments WHERE replied_at >= ?", (since_iso,)
+        ).fetchone()
+        return row["n"]
+
+    def count_by_status(self) -> dict:
+        rows = self._db.connection.execute(
+            "SELECT status, COUNT(*) AS n FROM comments GROUP BY status"
+        ).fetchall()
+        return {r["status"]: r["n"] for r in rows}
 
 
 class ErrorRepository:

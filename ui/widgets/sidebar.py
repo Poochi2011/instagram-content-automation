@@ -9,6 +9,7 @@ NAV_ITEMS = [
     ("dashboard", "📊  Dashboard"),
     ("accounts", "👤  Accounts"),
     ("queue", "📥  Queue"),
+    ("comments", "💬  Comments"),
     ("logs", "📜  Logs"),
     ("settings", "⚙️  Settings"),
 ]

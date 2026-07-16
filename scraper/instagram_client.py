@@ -44,7 +44,7 @@ class PostData:
 class InstagramClient:
     """Wraps an instaloader.Instaloader instance for read-only profile/post access."""
 
-    def __init__(self, username: str = "", password: str = "") -> None:
+    def __init__(self, username: str = "", password: str = "", proxy_url: str = "") -> None:
         self._loader = instaloader.Instaloader(
             download_videos=False,
             download_video_thumbnails=False,
@@ -70,7 +70,22 @@ class InstagramClient:
         )
         self._username = username
         self._password = password
+        self._proxy_url = proxy_url
         self._logged_in = False
+
+    def _ensure_proxy_applied(self) -> None:
+        """Set the configured proxy on whatever requests.Session is currently active.
+
+        Instaloader replaces self._loader.context._session wholesale on login and on
+        load_session_from_file(), which would silently drop a proxy set any earlier —
+        so this is called right before every actual network call instead of once at
+        construction time. Routes scraping through a residential proxy so GitHub
+        Actions' (otherwise rate-limited) datacenter IPs aren't what Instagram sees.
+        """
+        if not self._proxy_url:
+            return
+        session = self._loader.context._session
+        session.proxies.update({"http": self._proxy_url, "https": self._proxy_url})
 
     def login_if_configured(self) -> None:
         """Log in only if credentials were provided; anonymous access works for public profiles.
@@ -91,11 +106,13 @@ class InstagramClient:
             try:
                 self._loader.load_session_from_file(self._username, str(session_path))
                 self._logged_in = True
+                self._ensure_proxy_applied()
                 logger.info("Restored saved Instagram session for %s", self._username)
                 return
             except (instaloader.exceptions.InvalidArgumentException, FileNotFoundError) as exc:
                 logger.warning("Saved session invalid, will re-login: %s", exc)
 
+        self._ensure_proxy_applied()
         try:
             self._loader.login(self._username, self._password)
             self._loader.save_session_to_file(str(session_path))
@@ -114,18 +131,25 @@ class InstagramClient:
 
     def get_latest_post(self, username: str) -> Optional[PostData]:
         """Return the most recent post for a public profile, or None if it has no posts."""
+        posts = self.get_recent_posts(username, max_posts=1)
+        return posts[0] if posts else None
+
+    def get_recent_posts(self, username: str, max_posts: int = 1) -> list[PostData]:
+        """Return up to max_posts most recent posts for a public profile, newest first.
+
+        Used both for the normal one-post-per-cycle check (max_posts=1) and for a
+        manual backfill to seed the queue with a batch of recent history at once
+        (e.g. while waiting on proxy setup, scraping from a local/residential IP).
+        """
+        self._ensure_proxy_applied()
         try:
             profile = instaloader.Profile.from_username(self._loader.context, username)
+            posts = []
             for post in profile.get_posts():
-                return PostData(
-                    shortcode=post.shortcode,
-                    post_url=f"https://www.instagram.com/p/{post.shortcode}/",
-                    caption=post.caption,
-                    posted_at=post.date_utc.isoformat(),
-                    is_carousel=(post.typename == "GraphSidecar"),
-                    media=self._extract_media(post),
-                )
-            return None
+                posts.append(self._post_to_data(post))
+                if len(posts) >= max_posts:
+                    break
+            return posts
         except instaloader.exceptions.ProfileNotExistsException as exc:
             raise ScraperError(f"Profile '{username}' does not exist: {exc}") from exc
         except instaloader.exceptions.LoginRequiredException as exc:
@@ -133,7 +157,17 @@ class InstagramClient:
         except instaloader.exceptions.ConnectionException as exc:
             raise RateLimitError(f"Connection issue fetching '{username}' (possible rate limit): {exc}") from exc
         except instaloader.exceptions.InstaloaderException as exc:
-            raise ScraperError(f"Failed to fetch latest post for '{username}': {exc}") from exc
+            raise ScraperError(f"Failed to fetch posts for '{username}': {exc}") from exc
+
+    def _post_to_data(self, post) -> PostData:
+        return PostData(
+            shortcode=post.shortcode,
+            post_url=f"https://www.instagram.com/p/{post.shortcode}/",
+            caption=post.caption,
+            posted_at=post.date_utc.isoformat(),
+            is_carousel=(post.typename == "GraphSidecar"),
+            media=self._extract_media(post),
+        )
 
     @staticmethod
     def _extract_media(post) -> list[MediaItem]:
@@ -157,6 +191,7 @@ class InstagramClient:
         Re-encoding through Pillow to a clean baseline JPEG guarantees a format Graph
         API accepts, regardless of what Instagram actually served.
         """
+        self._ensure_proxy_applied()
         try:
             self._loader.context.get_and_write_raw(image_url, str(destination_path))
         except instaloader.exceptions.InstaloaderException as exc:

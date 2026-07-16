@@ -68,10 +68,10 @@ jobs:
         run: python main.py --prepare
 
       - name: Commit and push newly downloaded media
-        # Must happen before --publish: the Graph API fetches images from
+        # The Graph API (in the separate publish workflow) fetches images from
         # MEDIA_PUBLIC_BASE_URL itself, so a raw.githubusercontent.com URL only
-        # works once the file has actually been pushed. (Requires this repo to
-        # be public, or MEDIA_PUBLIC_BASE_URL to point at a different public host.)
+        # works once the file has actually been pushed here. (Requires this repo
+        # to be public, or MEDIA_PUBLIC_BASE_URL to point at a different public host.)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -79,19 +79,9 @@ jobs:
           git diff --staged --quiet || git commit -m "Automated scan: $(date -u +'%Y-%m-%d %H:%M UTC')"
           git pull --rebase && git push
 
-      - name: Run publish (post due items to the destination account)
-        env:
-          IG_DEST_ACCESS_TOKEN: ${{ secrets.IG_DEST_ACCESS_TOKEN }}
-          IG_DEST_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_DEST_BUSINESS_ACCOUNT_ID }}
-          MEDIA_PUBLIC_BASE_URL: ${{ secrets.MEDIA_PUBLIC_BASE_URL }}
-        run: python main.py --publish
-
-      # Comment auto-reply (--reply) is a separate, not-yet-shipped pipeline
-      # (still uncommitted locally as of 2026-07-10) -- deliberately not wired
-      # in here yet. Add it back once it's been live-tested on its own.
-
-      - name: Commit updated publish status
-        run: |
-          git add database/app.db
-          git diff --staged --quiet || git commit -m "Automated publish: $(date -u +'%Y-%m-%d %H:%M UTC')"
-          git pull --rebase && git push
+      # Publishing lives in a SEPARATE workflow (.github/workflows/publish.yml)
+      # that runs only at fixed daytime IST slots, so nothing gets posted in the
+      # middle of the night. This scan workflow only scrapes/prepares content and
+      # commits it to the repo for that publish workflow to pick up. Prepare also
+      # screens captions for blocked keywords, so anything explicit is marked
+      # 'rejected' here and never reaches the publish queue.

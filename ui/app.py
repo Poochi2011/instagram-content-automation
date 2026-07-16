@@ -9,8 +9,9 @@ from PySide6.QtWidgets import QApplication, QHBoxLayout, QMainWindow, QStackedWi
 
 from config.settings import Settings, load_settings
 from database.db import Database
-from database.repository import AccountRepository, ErrorRepository, PostRepository
+from database.repository import AccountRepository, CommentRepository, ErrorRepository, PostRepository
 from ui.pages.accounts import AccountsPage
+from ui.pages.comments import CommentsPage
 from ui.pages.dashboard import DashboardPage
 from ui.pages.logs import LogsPage
 from ui.pages.queue import QueuePage
@@ -29,6 +30,7 @@ class AppContext:
     account_repo: AccountRepository
     post_repo: PostRepository
     error_repo: ErrorRepository
+    comment_repo: CommentRepository
 
     @classmethod
     def build(cls) -> "AppContext":
@@ -41,6 +43,7 @@ class AppContext:
             account_repo=AccountRepository(db),
             post_repo=PostRepository(db),
             error_repo=ErrorRepository(db),
+            comment_repo=CommentRepository(db),
         )
 
 
@@ -68,6 +71,7 @@ class MainWindow(QMainWindow):
         self.dashboard_page = DashboardPage(context)
         self.accounts_page = AccountsPage(context)
         self.queue_page = QueuePage(context)
+        self.comments_page = CommentsPage(context)
         self.logs_page = LogsPage(context)
         self.settings_page = SettingsPage(context)
 
@@ -75,6 +79,7 @@ class MainWindow(QMainWindow):
             "dashboard": self.dashboard_page,
             "accounts": self.accounts_page,
             "queue": self.queue_page,
+            "comments": self.comments_page,
             "logs": self.logs_page,
             "settings": self.settings_page,
         }

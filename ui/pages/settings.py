@@ -61,6 +61,7 @@ class SettingsPage(QWidget):
         form.addRow("Log level", self.log_level_input)
 
         layout.addWidget(form_box)
+        layout.addWidget(self._build_scraping_section(s))
         layout.addWidget(self._build_publish_section(s))
 
         self.status_label = QLabel("")
@@ -72,6 +73,29 @@ class SettingsPage(QWidget):
         save_btn.clicked.connect(self._save)
         layout.addWidget(save_btn)
         layout.addStretch()
+
+    def _build_scraping_section(self, s) -> QWidget:
+        box = QWidget()
+        box.setObjectName("card")
+        form = QFormLayout(box)
+        form.setContentsMargins(20, 20, 20, 20)
+        form.setSpacing(14)
+
+        section_label = QLabel("Scraping")
+        section_label.setObjectName("cardTitle")
+        form.addRow(section_label)
+
+        self.instagram_username_input = QLineEdit(s.instagram_username)
+        self.instagram_password_input = QLineEdit(s.instagram_password)
+        self.instagram_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.scraper_proxy_url_input = QLineEdit(s.scraper_proxy_url)
+        self.scraper_proxy_url_input.setPlaceholderText("http://user:pass@host:port (residential proxy, optional)")
+
+        form.addRow("Instagram username", self.instagram_username_input)
+        form.addRow("Instagram password", self.instagram_password_input)
+        form.addRow("Proxy URL", self.scraper_proxy_url_input)
+
+        return box
 
     def _build_publish_section(self, s) -> QWidget:
         box = QWidget()
@@ -124,6 +148,9 @@ class SettingsPage(QWidget):
         s.tesseract_path = self.tesseract_path_input.text().strip()
         s.polling_interval_minutes = self.polling_interval_input.value()
         s.log_level = self.log_level_input.currentText()
+        s.instagram_username = self.instagram_username_input.text().strip()
+        s.instagram_password = self.instagram_password_input.text()
+        s.scraper_proxy_url = self.scraper_proxy_url_input.text().strip()
         s.ig_dest_access_token = self.ig_dest_access_token_input.text().strip()
         s.ig_dest_business_account_id = self.ig_dest_business_account_id_input.text().strip()
         s.media_public_base_url = self.media_public_base_url_input.text().strip()

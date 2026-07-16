@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS posts (
     repost_caption  TEXT,
     is_carousel     INTEGER NOT NULL DEFAULT 0,
     status          TEXT NOT NULL DEFAULT 'new'
-                    CHECK (status IN ('new', 'downloaded', 'ocr_done', 'ready', 'processed', 'error')),
+                    CHECK (status IN ('new', 'downloaded', 'ocr_done', 'ready', 'processed', 'error', 'rejected')),
     downloaded_at   TEXT,
     processed_at    TEXT,
     -- Publish-pipeline state (Graph API auto-publish). Kept on the row, not in
@@ -57,6 +57,32 @@ CREATE TABLE IF NOT EXISTS post_media (
 );
 
 CREATE INDEX IF NOT EXISTS idx_post_media_post_id ON post_media(post_id);
+
+-- Comments fetched from the destination account's own posts, plus the state
+-- of our reply to each. Mirrors the posts-table philosophy: one row carries
+-- the whole lifecycle (fetched -> drafted -> replied/flagged/skipped) so a
+-- fresh Actions run resumes exactly where the last one stopped and no comment
+-- is ever replied to twice (ig_comment_id is UNIQUE).
+CREATE TABLE IF NOT EXISTS comments (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    ig_comment_id       TEXT NOT NULL UNIQUE,
+    ig_media_id         TEXT NOT NULL,
+    media_caption       TEXT,
+    username            TEXT,
+    text                TEXT,
+    commented_at        TEXT,
+    classification      TEXT,
+    reply_text          TEXT,
+    status              TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'drafted', 'replied', 'flagged', 'skipped', 'error')),
+    reply_ig_comment_id TEXT,
+    replied_at          TEXT,
+    last_error          TEXT,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_status ON comments(status);
+CREATE INDEX IF NOT EXISTS idx_comments_media ON comments(ig_media_id);
 
 CREATE TABLE IF NOT EXISTS errors (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 from config.settings import PROJECT_ROOT, Settings
 from database.models import Post
 from database.repository import ErrorRepository, PostMediaRepository, PostRepository
+from publisher.content_filter import screen_texts
 from publisher.graph_api_client import GraphAPIClient
 from utils.exceptions import PermanentPublishError, TransientPublishError
 from utils.logger import get_logger
@@ -102,13 +103,36 @@ def publish_due_posts(
         logger.info("Daily publish cap (%d) already reached; skipping this cycle.", settings.max_publish_per_day)
         return {"published": 0, "failed": 0, "skipped_daily_cap": True}
 
-    to_attempt = min(settings.max_publish_per_cycle, remaining_today)
     published = 0
     failed = 0
-    for post in post_repo.list_publishable(_now_str())[:to_attempt]:
+    rejected = 0
+    attempted = 0
+    # Iterate the full due list (not a slice): a post rejected by the content
+    # filter shouldn't consume one of this cycle's publish slots, so we keep
+    # pulling the next candidate until max_publish_per_cycle real attempts run.
+    for post in post_repo.list_publishable(_now_str()):
+        if attempted >= min(settings.max_publish_per_cycle, remaining_today):
+            break
+
+        blocked = screen_texts(
+            [post.repost_caption, post.caption, post.ocr_text], settings.blocked_keywords
+        )
+        if blocked:
+            reason = f"Blocked by content filter: matched '{blocked}'"
+            post_repo.mark_rejected(post.shortcode, reason)
+            logger.info("Rejected post %s at publish time — %s", post.shortcode, reason)
+            rejected += 1
+            continue
+
+        attempted += 1
         if publish_post(post, settings, post_repo, post_media_repo, error_repo):
             published += 1
         else:
             failed += 1
 
-    return {"published": published, "failed": failed, "skipped_daily_cap": False}
+    return {
+        "published": published,
+        "failed": failed,
+        "rejected": rejected,
+        "skipped_daily_cap": False,
+    }

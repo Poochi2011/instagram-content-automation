@@ -63,7 +63,9 @@ def cmd_prepare() -> dict:
         account_repo = AccountRepository(db)
         post_repo = PostRepository(db)
         error_repo = ErrorRepository(db)
-        prepared = prepare_pending_posts(post_repo, account_repo, error_repo, settings.tesseract_path)
+        prepared = prepare_pending_posts(
+            post_repo, account_repo, error_repo, settings.tesseract_path, settings.blocked_keywords
+        )
         return {"prepared": prepared}
     finally:
         db.close()
