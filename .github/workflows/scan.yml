@@ -1,12 +1,16 @@
 name: Instagram scan
 
 on:
-  schedule:
-    # Every 3 hours, not hourly -- hourly meant 11 accounts x 24 checks/day
-    # through one proxy identity, which correlated with every account hitting
-    # a login wall (see CONTEXT.md, 2026-07-11). Lower volume + per-group
-    # identity rotation (scraper/proxy_rotation.py) are the mitigation.
-    - cron: "0 */3 * * *"
+  # Schedule trigger disabled 2026-08-09: DataImpulse residential proxy
+  # (SCRAPER_PROXY_URL) is out of purchased traffic (407 TRAFFIC_EXHAUSTED,
+  # confirmed by curling the proxy directly) -- every scheduled run since
+  # 2026-08-04 has failed at the proxy CONNECT step, burning CI minutes on a
+  # guaranteed failure. Not a code bug -- nothing here can fix a billing
+  # issue on the proxy provider's end. publish.yml is unaffected (Graph API,
+  # no proxy) and still has a ~100-post ready queue to draw from. Re-add the
+  # `schedule:` block below once the DataImpulse balance is topped up:
+  #   schedule:
+  #     - cron: "0 */3 * * *"
   workflow_dispatch: {} # adds a "Run workflow" button in the Actions tab
 
 permissions:
